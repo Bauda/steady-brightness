@@ -41,3 +41,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'CodeQL traced build failed.' }
       - name: Analyze
         uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+      - name: Keep extraction diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: codeql-diagnostics
+          path: ${{ runner.temp }}/codeql_databases/**/log/**
+          retention-days: 7

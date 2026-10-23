@@ -8,3 +8,4 @@
 *.ico binary
 *.png binary
 third_party/** -whitespace
+third_party/** linguist-vendored
