@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Troubleshooting and installation
+    url: https://github.com/Bauda/steady-brightness/blob/main/docs/troubleshooting.md
+    about: Check DDC/CI, sleep, connection paths, and tray visibility.
+  - name: Private security report
+    url: https://github.com/Bauda/steady-brightness/security/advisories/new
+    about: Report a vulnerability privately instead of posting details in a public issue.

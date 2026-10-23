@@ -1,0 +1,16 @@
+/build/
+/dist/
+/test-results/
+.vs/
+.vscode/
+*.obj
+*.res
+*.exe
+*.pdb
+*.ilk
+*.log
+*.user
+*.suo
+monitor-report*.txt
+Thumbs.db
+Desktop.ini

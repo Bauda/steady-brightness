@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest an improvement while preserving low resource use.
+title: '[Feature]: '
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: 'Describe the situation and your desired outcome.'
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Suggested behavior
+      description: 'Consider the effect on idle CPU/memory, runtime dependencies, accessibility, and privacy.'
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or examples

@@ -1,0 +1,34 @@
+name: Bug or monitor compatibility report
+description: Report a reproducible problem or an unavailable monitor.
+title: '[Bug]: '
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: 'Please check the troubleshooting guide first. Do not post serial numbers, credentials, full system dumps, or unredacted device reports. Security vulnerabilities belong in Security > Report a vulnerability.'
+  - type: input
+    id: version
+    attributes:
+      label: App version and Windows version
+      placeholder: '1.0.2; Windows 11 24H2 x64'
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: Monitor and connection
+      description: 'Monitor model(s), GPU/driver, direct cable or dock/KVM/adapter, and whether DDC/CI is enabled. Avoid unique device identifiers.'
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps, expected behavior, and actual behavior
+      description: 'Include the exact status text. Does it happen after sleep, on startup, or after changing a value?'
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Optional screenshots or redacted diagnostic details
+      description: 'Review attachments for personal information. Reports stay public.'

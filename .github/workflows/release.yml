@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, verify, and publish
+    runs-on: windows-2022
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build
+        shell: cmd
+        run: build.cmd
+      - name: Test
+        shell: powershell
+        run: .\scripts\test.ps1
+      - name: Package and check version
+        shell: powershell
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: .\scripts\package.ps1 -Tag $env:RELEASE_TAG
+      - name: Attest executable and archive
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/SteadyBrightness.exe
+            dist/SteadyBrightness-Windows-x64.zip
+      - name: Publish complete release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create $env:RELEASE_TAG --verify-tag --draft --title "Steady Brightness $env:RELEASE_TAG" --notes-file .github/release-notes.md dist/SteadyBrightness-Windows-x64.zip dist/SteadyBrightness.exe dist/SHA256SUMS
+          if ($LASTEXITCODE -ne 0) { throw 'Creating draft release or uploading assets failed.' }
+          gh release edit $env:RELEASE_TAG --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Publishing release failed.' }
