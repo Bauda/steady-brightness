@@ -20,5 +20,5 @@ if not exist build mkdir build
 if errorlevel 1 exit /b 1
 rc /nologo /fo build\app.res app.rc
 if errorlevel 1 exit /b 1
-cl /nologo /std:c++17 /O1 /Os /MT /W4 /EHsc /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 /D_CRT_SECURE_NO_WARNINGS main.cpp monitor.cpp slider.cpp build\app.res /Fo:build\ /Fe:build\SteadyBrightness.exe /link /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA /DELAYLOAD:dxva2.dll /DELAYLOAD:UIAutomationCore.dll delayimp.lib /MANIFEST:EMBED /MANIFESTINPUT:app.manifest
+cl /nologo /std:c++17 /O1 /Os /MT /W4 /EHsc /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 /D_CRT_SECURE_NO_WARNINGS main.cpp monitor.cpp slider.cpp build\app.res /Fobuild\ /Febuild\SteadyBrightness.exe /link /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA /DELAYLOAD:dxva2.dll /DELAYLOAD:UIAutomationCore.dll delayimp.lib /MANIFEST:EMBED /MANIFESTINPUT:app.manifest
 exit /b %errorlevel%
