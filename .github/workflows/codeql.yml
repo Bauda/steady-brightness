@@ -33,7 +33,11 @@ jobs:
           languages: c-cpp
           build-mode: manual
       - name: Build
-        shell: cmd
-        run: build.cmd
+        shell: powershell
+        run: |
+          # Explicit tracing also captures MSVC when developer-environment setup
+          # starts a nested cmd process on the hosted Windows runner.
+          & "$env:CODEQL_DIST\codeql.exe" database trace-command $env:CODEQL_EXTRACTOR_CPP_WIP_DATABASE -- cmd.exe /d /c build.cmd
+          if ($LASTEXITCODE -ne 0) { throw 'CodeQL traced build failed.' }
       - name: Analyze
         uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
