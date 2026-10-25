@@ -14,6 +14,12 @@ Detection attempts the Windows low-level DDC/CI brightness command, Windows' hig
 
 The app reads back changes and reports an unconfirmed write. A monitor may round values, use a restricted range in its current picture mode, or ignore DDC writes. Refresh after adjusting brightness through the monitor's own buttons. There is no continuous polling to track physical-button changes while idle.
 
+## Brightness jumps to 100% after powering on
+
+Version 1.0.3 remembers the chosen hardware brightness for each external monitor. Leave **Options > Restore brightness after wake** enabled, then set your preferred brightness through its slider once. Confirmed changes survive app restarts. Reconnect/wake notifications trigger three bounded recovery passes, even while the flyout is hidden, to allow slow monitor firmware to settle.
+
+If Windows receives no reconnect or wake event because the monitor keeps its display connection alive, open the flyout or press Refresh to restore the saved value. Continuous polling is intentionally avoided. Disable the restore option when you want brightness changes made through the monitor's on-screen menu to become the current baseline. Device identity must be unambiguous; cloned/multiple physical panels behind one logical source may be excluded.
+
 ## Slow or stuck monitor command
 
 The tray uses a separate helper and stops an operation after approximately nine seconds. Wait for the status, then press **Refresh** to reconnect. Pending slider movements are coalesced to reduce commands. A slow monitor can still take time to apply and confirm a value.

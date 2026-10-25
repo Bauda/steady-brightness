@@ -12,6 +12,10 @@ The same executable runs in `--worker` mode with explicitly inherited mapping/ev
 
 `monitor.cpp` enumerates physical displays and built-in panels, reads brightness, scales device ranges to percentages, and verifies writes with bounded retries. Backends include VCP 0x10 via Windows DDC/CI, the Windows high-level monitor API, WMI for compatible built-in panels, and optional NVIDIA direct I2C. `nv-direct.h` loads the installed system NVIDIA library only when needed; driver binaries are not redistributed.
 
+`brightness-memory.h` saves external monitor brightness under its device interface path, obtained through DisplayConfigGetDeviceInfo. Logical display numbers remain for diagnostics/WMI matching; they are not persistence keys. Successful initial reads seed unknown devices, and confirmed user changes replace saved values. Reconnect reads cannot overwrite saved values with a firmware reset. Ambiguous IDs and built-in WMI panels are excluded. Test modes use temporary, isolated registry keys.
+
+Monitor interface arrival/removal, display changes, display wake, and resume events debounce into three recovery scans. Scans and verified writes remain inside the bounded helper even with the flyout hidden. The helper exits between hidden recovery passes and the timer stops after the final pass. Startup and opening/refreshing the flyout also reconcile remembered levels. If Windows supplies no event while a monitor retains its connection, automatic detection without polling is not possible; opening the flyout provides recovery.
+
 ## Slider
 
 `slider.cpp` implements one native window per slider. It draws rounded, antialiased tracks and thumbs into a temporary DIB on repaint and then releases it. Mouse, keyboard, disabled/focus states, and UI Automation range/name/value use the same control. UIAutomationCore is delay-loaded for accessibility. There is no retained frame loop or extra graphics runtime.
@@ -19,6 +23,7 @@ The same executable runs in `--worker` mode with explicitly inherited mapping/ev
 ## Files and settings
 
 - `HKCU\Software\SteadyBrightness\Theme`: 0 = Windows default, 1 = light, 2 = dark. High contrast takes priority.
+- Values named `Brightness:<device interface path>` in the same key store confirmed percentages; `RestoreBrightness` controls restoration (default on). No registry handles or device history stay open in memory.
 - `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\SteadyBrightness`: optional startup command.
 - `%LOCALAPPDATA%\Programs\SteadyBrightness`: per-user installation and embedded removal scripts.
 - Per-user Start menu shortcut and Windows uninstall registration.

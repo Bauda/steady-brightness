@@ -103,22 +103,30 @@ public:
         d.error = GetLastError(); if (!d.error) d.error = ERROR_INVALID_DATA;
         return false;
     }
-    static std::wstring Friendly(HMONITOR monitor) {
+    static std::wstring Friendly(HMONITOR monitor, std::wstring& identity) {
         UINT32 pathsCount = 0, modesCount = 0;
         if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &pathsCount, &modesCount) != ERROR_SUCCESS) return L"";
         std::vector<DISPLAYCONFIG_PATH_INFO> paths(pathsCount);
         std::vector<DISPLAYCONFIG_MODE_INFO> modes(modesCount);
         if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &pathsCount, paths.data(), &modesCount, modes.data(), nullptr) != ERROR_SUCCESS) return L"";
         MONITORINFOEXW mi{}; mi.cbSize = sizeof(mi); GetMonitorInfoW(monitor, &mi);
+        std::wstring name;
+        unsigned matches=0;
         for (UINT32 i = 0; i < pathsCount; ++i) {
             DISPLAYCONFIG_SOURCE_DEVICE_NAME source{};
             source.header = { DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME, sizeof(source), paths[i].sourceInfo.adapterId, paths[i].sourceInfo.id };
             if (DisplayConfigGetDeviceInfo(&source.header) != ERROR_SUCCESS || _wcsicmp(source.viewGdiDeviceName, mi.szDevice)) continue;
             DISPLAYCONFIG_TARGET_DEVICE_NAME target{};
             target.header = { DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME, sizeof(target), paths[i].targetInfo.adapterId, paths[i].targetInfo.id };
-            if (DisplayConfigGetDeviceInfo(&target.header) == ERROR_SUCCESS && target.monitorFriendlyDeviceName[0]) return target.monitorFriendlyDeviceName;
+            ++matches;
+            if (DisplayConfigGetDeviceInfo(&target.header) == ERROR_SUCCESS) {
+                if(name.empty()) name=target.monitorFriendlyDeviceName;
+                identity=target.monitorDevicePath;
+            }
         }
-        return L"";
+        // A cloned source can refer to several physical targets. Do not guess.
+        if(matches!=1) identity.clear();
+        return name;
     }
     static BOOL CALLBACK EnumMonitor(HMONITOR hm, HDC, LPRECT, LPARAM context) {
         auto* self = (Hardware*)context;
@@ -130,7 +138,8 @@ public:
             physical.resize(count);
             if (!GetPhysicalMonitorsFromHMONITOR(hm, count, physical.data())) physical.clear();
         }
-        std::wstring friendly = Friendly(hm);
+        std::wstring identity;
+        std::wstring friendly = Friendly(hm,identity);
         DISPLAY_DEVICEW device{}; device.cb = sizeof(device);
         EnumDisplayDevicesW(mi.szDevice, 0, &device, 0);
         const size_t rows = std::max<size_t>(1, physical.size());
@@ -139,6 +148,7 @@ public:
             int i = (int)s.count++;
             auto& d = s.monitors[i];
             swprintf_s(d.id, L"%s|%zu", mi.szDevice, p);
+            if(rows==1) Copy(d.persistentId,identity.c_str());
             Copy(d.name, !friendly.empty() ? friendly.c_str() : device.DeviceString[0] ? device.DeviceString : mi.szDevice);
             if (rows > 1 && p < physical.size() && physical[p].szPhysicalMonitorDescription[0]) Copy(d.name, physical[p].szPhysicalMonitorDescription);
             d.bounds = mi.rcMonitor; d.primary = (mi.dwFlags & MONITORINFOF_PRIMARY) != 0;
@@ -284,12 +294,13 @@ int DiagnosticMain(const wchar_t* path, bool exercise) {
     FILE* f = nullptr; if (_wfopen_s(&f, path, L"w, ccs=UTF-8") || !f) return 2;
     Shared shared{}; shared.version = ProtocolVersion;
     Hardware hardware(shared); hardware.ScanAll();
-    fwprintf(f, L"Steady Brightness 1.0.2 - %s\nDetected: %lu\n", exercise ? L"hardware write/read/restore test" : L"read-only monitor probe", shared.count);
+    fwprintf(f, L"Steady Brightness 1.0.3 - %s\nDetected: %lu\n", exercise ? L"hardware write/read/restore test" : L"read-only monitor probe", shared.count);
     int failures = 0;
     for (DWORD i = 0; i < shared.count; ++i) {
         auto& m = shared.monitors[i];
         fwprintf(f, L"\n%lu. %s [%s]\nBackend=%lu Range=%lu..%lu Raw=%lu Percent=%d Error=%lu\n%s\n",
             i + 1, m.name, m.id, m.backend, m.minimum, m.maximum, m.current, Percent(m), m.error, m.note);
+        fwprintf(f,L"PersistentIdentity=%s\n",m.persistentId[0]?m.persistentId:L"unavailable");
         fflush(f);
         if (!m.backend) {
             if (hardware.owned[i].hasPhysical) {

@@ -10,6 +10,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test.ps1
 
 The runner uses separate processes for integration and UI Automation checks. It launches simulated monitors and deliberate helper failures, checks independent values, hide/reopen behavior, GDI object growth, crash isolation, and the nine-second timeout. It never invokes the hardware write diagnostic or presses Refresh in fault modes. Tests find windows by their own process ID, so they do not target an already running copy.
 
+The native `memory-tests.exe` checks persisted values, valid boundaries, missing/ambiguous device identities, and display renumbering in a temporary registry key. `test-reconnect.ps1` simulates Samsung firmware returning to 100%, unavailable reads, reordered displays, a later reset during wake-up, hidden-flyout recovery, opt-out behavior, and the end of the finite retry sequence. It uses simulated monitors only and never changes physical brightness.
+
 For input/painting and light/dark persistence checks on an unlocked, interactive Windows desktop:
 
 ```powershell
