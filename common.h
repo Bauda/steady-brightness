@@ -10,11 +10,12 @@
 #include <stdint.h>
 
 constexpr int MaxMonitors = 32;
-constexpr DWORD ProtocolVersion = 1;
+constexpr DWORD ProtocolVersion = 2;
 enum Command : LONG { Scan = 1, Set = 2, Quit = 3, SimulateHang = 90, SimulateCrash = 91 };
 enum Backend : DWORD { Unavailable, DdcVcp, DdcHigh, Wmi, Nvidia };
 struct MonitorData {
     wchar_t id[256];
+    wchar_t persistentId[128];
     wchar_t name[128];
     wchar_t note[160];
     DWORD backend, minimum, maximum, current, error;

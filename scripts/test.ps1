@@ -2,7 +2,9 @@ param([switch]$Visual)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 if (-not (Test-Path -LiteralPath (Join-Path $repo 'build\SteadyBrightness.exe'))) { throw 'Run build.cmd first.' }
-$suites = @('test-app.ps1', 'test-slider-accessibility.ps1')
+& (Join-Path $repo 'build\memory-tests.exe')
+if ($LASTEXITCODE -ne 0) { throw 'Brightness persistence tests failed.' }
+$suites = @('test-app.ps1', 'test-slider-accessibility.ps1', 'test-reconnect.ps1')
 if ($Visual) { $suites += @('test-slider-input.ps1', 'test-themes.ps1') }
 foreach ($suite in $suites) {
     Write-Host "Running $suite"

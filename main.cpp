@@ -1,5 +1,7 @@
 #include "common.h"
 #include "slider.h"
+#include "brightness-memory.h"
+#include <dbt.h>
 #include <commctrl.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -38,19 +40,29 @@ UINT taskbarCreated;
 UINT dpi = 96;
 bool menuActive = false, scanning = false, needScan = false, pending = false, testMode = false;
 bool demo = false, faultHang = false, faultCrash = false;
+bool restoreBrightness=true, activeRestore=false, topologyTimerArmed=false;
+int recoveryPasses=0;
+BrightnessMemory brightnessMemory(L"Software\\SteadyBrightness");
+std::wstring demoSettingsKey;
+int demoValues[2]{55,40}, demoScanCount=0, demoUnavailable=0;
+bool demoReversed=false, demoLateReset=false;
 ULONGLONG started = 0;
 int activeIndex = -1;
 LONG activeCommand = 0;
 int iconRetries = 0;
 HANDLE instanceMutex;
 HPOWERNOTIFY powerNotification;
+HDEVNOTIFY monitorNotification;
 DWORD lastConsoleDisplayState=MAXDWORD;
 constexpr GUID ConsoleDisplayState={0x6fe69556,0x704a,0x47a0,{0x8f,0x24,0xc2,0x8d,0x93,0x6f,0xda,0x47}};
+// GUID_DEVINTERFACE_MONITOR from the Windows SDK (ntddvdeo.h).
+constexpr GUID MonitorInterface={0xe6f07b5f,0xee97,0x4a90,{0xb0,0x76,0x33,0xf5,0x7b,0xf4,0xea,0xa7}};
 NOTIFYICONDATAW tray{};
 struct Row {
     MonitorData data{};
     HWND name = nullptr, value = nullptr, slider = nullptr, status = nullptr;
     int desired = -1;
+    bool restoring=false, persistentUnique=false;
     ULONGLONG due = 0;
 };
 std::vector<Row> rows;
@@ -240,6 +252,7 @@ void MakeRows(const MonitorData* monitors, DWORD count) {
     DestroyRows(); count = std::min<DWORD>(count, MaxMonitors); rows.resize(count);
     for (DWORD i = 0; i < count; ++i) {
         auto& r = rows[i]; r.data = monitors[i];
+        r.persistentUnique=BrightnessMemory::Unique(monitors,count,i);
         std::wstring name = std::to_wstring(i+1) + L". " + r.data.name;
         if (r.data.primary) name += L" (main)";
         r.name = Label(name.c_str(), bodyFont, SS_ENDELLIPSIS);
@@ -254,6 +267,48 @@ void MakeRows(const MonitorData* monitors, DWORD count) {
     }
     Text(generalStatus, count ? L"Changes are checked with your monitor." : L"No active displays found. Click Refresh to retry.");
     Layout(); if (IsWindowVisible(popup)) PositionPopup();
+}
+void RememberRows() {
+    for(size_t i=0;i<rows.size();++i) {
+        auto& row=rows[i];
+        if(!row.persistentUnique)continue;
+        int saved=0;
+        if(!brightnessMemory.Read(row.data,saved) || !restoreBrightness) {
+            if(!brightnessMemory.Save(row.data,Percent(row.data)))Text(row.status,L"Could not remember brightness for this monitor.");
+        } else if(saved!=Percent(row.data)) {
+            row.desired=saved;row.restoring=true;row.due=GetTickCount64();
+            SendMessageW(row.slider,TBM_SETPOS,TRUE,saved);
+            wchar_t text[20];swprintf_s(text,L"%d%%",saved);Text(row.value,text);
+            Text(row.status,L"Restoring saved brightness...");
+        }
+    }
+}
+void ArmTopologyTimer(UINT delay) {
+    SetTimer(host,TopologyTimer,demo?30:delay,nullptr);topologyTimerArmed=true;
+}
+void RetryRecovery() {
+    if(recoveryPasses>0 && !topologyTimerArmed)ArmTopologyTimer(2500);
+}
+void QueueRecovery() {
+    if(testMode && !demo)return;
+    if(!restoreBrightness && !IsWindowVisible(popup))return;
+    recoveryPasses=3;ArmTopologyTimer(1400);
+}
+void ReadDemo() {
+    ++demoScanCount;
+    if(demoLateReset && recoveryPasses==1){demoValues[1]=100;demoLateReset=false;}
+    MonitorData monitors[2]{};
+    for(int i=0;i<2;++i) {
+        int which=demoReversed?1-i:i;
+        Copy(monitors[i].name,which?L"C27JG5x":L"XV271U M3");
+        Copy(monitors[i].persistentId,which?L"demo:samsung":L"demo:acer");
+        swprintf_s(monitors[i].id,L"DISPLAY%d",i+1);
+        monitors[i].backend=which && demoUnavailable>0?Unavailable:DdcVcp;
+        monitors[i].maximum=100;monitors[i].current=(DWORD)demoValues[which];monitors[i].primary=which==0;
+        Copy(monitors[i].note,L"Demo only - no monitor changed");
+    }
+    if(demoUnavailable>0)--demoUnavailable;
+    MakeRows(monitors,2);RememberRows();
 }
 void AddIcon() {
     tray.cbSize = sizeof(tray); tray.hWnd = host; tray.uID = 1;
@@ -278,7 +333,7 @@ void PositionPopup() {
 void Dispatch();
 void StartRequest(LONG command, int index = -1, int percent = 0) {
     if (pending) return;
-    if (!worker.Start()) { Text(generalStatus,L"Could not start monitor helper. Click Refresh to retry."); return; }
+    if (!worker.Start()) { Text(generalStatus,L"Could not start monitor helper. Click Refresh to retry.");RetryRecovery();return; }
     pending = true; activeCommand = command; activeIndex = index; started = GetTickCount64();
     if (command == Scan) { scanning = true; Text(generalStatus,L"Reading displays..."); EnableWindow(refreshButton,FALSE); }
     worker.shared->command = command; worker.shared->index = index; worker.shared->percent = percent;
@@ -302,14 +357,19 @@ void Dispatch() {
         int target=rows[i].desired; rows[i].desired=-1;
         if(demo) {
             rows[i].data.current=Raw(rows[i].data,target); Text(rows[i].status,L"Demo only - no monitor changed");
+            demoValues[!_wcsicmp(rows[i].data.persistentId,L"demo:samsung")?1:0]=target;
+            if(!rows[i].restoring && rows[i].persistentUnique)brightnessMemory.Save(rows[i].data,target);
+            rows[i].restoring=false;
             continue;
         }
         if (!worker.process) { needScan=true; Dispatch(); return; }
+        activeRestore=rows[i].restoring;rows[i].restoring=false;
         StartRequest(Set,(int)i,target); return;
     }
     ScheduleDrag();
     bool queued=false;for(auto& r:rows) if(r.desired>=0) queued=true;
     if(!queued && !IsWindowVisible(popup)) worker.Stop();
+    if(!queued)RetryRecovery();
 }
 void Complete(bool failed, const wchar_t* reason=nullptr) {
     KillTimer(host,BusyTimer);
@@ -322,42 +382,50 @@ void Complete(bool failed, const wchar_t* reason=nullptr) {
         Text(generalStatus,reason?reason:L"Monitor helper stopped. Click Refresh to reconnect.");
     } else if(command==Scan) {
         MakeRows(worker.shared->monitors,worker.shared->count);
+        RememberRows();
     } else if(command==Set && index>=0 && index<(int)rows.size()) {
         auto& r=rows[index]; r.data=worker.shared->monitors[index];
+        bool remembered=!worker.shared->success || activeRestore || !r.persistentUnique || brightnessMemory.Save(r.data,Percent(r.data));
         if(r.desired<0) {
             if(!BrightnessSliderDragging(r.slider)) {
                 int value=Percent(r.data); SendMessageW(r.slider,TBM_SETPOS,TRUE,value);
                 wchar_t text[20];swprintf_s(text,L"%d%%",value);Text(r.value,text);
             }
-            Text(r.status,worker.shared->success?L"Brightness confirmed by monitor":L"Change not confirmed. Click Refresh to retry.");
+            Text(r.status,!remembered?L"Brightness applied, but could not save it.":worker.shared->success?L"Brightness confirmed by monitor":L"Change not confirmed. Click Refresh to retry.");
         }
         Text(generalStatus,worker.shared->success?L"Changes are checked with your monitor.":L"Monitor did not confirm the requested brightness.");
     }
-    if(failed) { needScan=false; return; }
+    if(failed) { needScan=false;RetryRecovery();return; }
     Dispatch();
 }
 void Refresh() {
-    if(demo) return;
+    if(demo) {ReadDemo();Dispatch();return;}
     for(auto& r:rows) {r.desired=-1;EnableWindow(r.slider,FALSE);}
     needScan=true;Dispatch();
 }
 void Hide() {
     for(auto& row:rows)if(BrightnessSliderDragging(row.slider))CancelBrightnessSliderDrag(row.slider);
-    ShowWindow(popup,SW_HIDE); KillTimer(host,TopologyTimer);
+    ShowWindow(popup,SW_HIDE);
     if(!pending) Dispatch();
 }
 void Show(bool toggle=true) {
     if(toggle && IsWindowVisible(popup)) {Hide();return;}
     PositionPopup(); ShowWindow(popup,SW_SHOWNORMAL); ShowWindow(popup,SW_SHOW); SetForegroundWindow(popup);
     if(demo) {
-        if(rows.empty()) {
-            MonitorData monitors[2]{};
-            Copy(monitors[0].name,L"XV271U M3");monitors[0].backend=DdcVcp;monitors[0].maximum=100;monitors[0].current=55;monitors[0].primary=TRUE;
-            Copy(monitors[1].name,L"C27JG5x");monitors[1].backend=DdcVcp;monitors[1].maximum=100;monitors[1].current=40;
-            Copy(monitors[0].note,L"Demo only - no monitor changed");Copy(monitors[1].note,L"Demo only - no monitor changed");MakeRows(monitors,2);
-        }
+        if(rows.empty()){ReadDemo();Dispatch();}
     } else if(faultHang || faultCrash) StartRequest(faultHang?SimulateHang:SimulateCrash);
     else Refresh();
+}
+void ToggleRestoration() {
+    restoreBrightness=!restoreBrightness;
+    HKEY key=nullptr;
+    const wchar_t* path=testMode?demoSettingsKey.c_str():L"Software\\SteadyBrightness";
+    if(RegCreateKeyExW(HKEY_CURRENT_USER,path,0,nullptr,0,KEY_SET_VALUE,nullptr,&key,nullptr)==ERROR_SUCCESS) {
+        DWORD enabled=restoreBrightness?1:0;
+        RegSetValueExW(key,L"RestoreBrightness",0,REG_DWORD,(BYTE*)&enabled,sizeof(enabled));RegCloseKey(key);
+    }
+    if(!restoreBrightness){recoveryPasses=0;KillTimer(host,TopologyTimer);topologyTimerArmed=false;}
+    Refresh();
 }
 void Options() {
     menuActive=true;
@@ -365,6 +433,7 @@ void Options() {
     MenuEntry entries[]={
         {1,L"Start with Windows",AutoStart()},
         {2,L"Keep tray icon visible"},
+        {13,L"Restore brightness after wake",restoreBrightness},
         {0,L"",false,true},
         {10,L"Theme: Use Windows setting",theme==FollowWindows},
         {11,L"Theme: Light",theme==Light},
@@ -387,8 +456,9 @@ void Options() {
     if(selected==1) SetAutoStart(!AutoStart());
     if(selected==2) {Hide();ShellExecuteW(nullptr,L"open",L"ms-settings:taskbar",nullptr,nullptr,SW_SHOWNORMAL);}
     if(selected>=10 && selected<=12)SetTheme((Theme)(selected-10));
+    if(selected==13)ToggleRestoration();
     if(selected==3) MessageBoxW(popup,
-        L"Steady Brightness 1.0.2\n\nNative Windows hardware brightness control.\nNo periodic polling while idle. No network access, telemetry, animations or GPU rendering loop.\n\nMonitor calls run in a temporary helper with a 9-second timeout. The helper exits when the flyout closes after pending writes finish.\n\nExternal displays use DDC/CI; built-in panels use Windows WMI when available. Unsupported displays are shown explicitly.\n\nClose other brightness utilities to avoid competing monitor commands.",
+        L"Steady Brightness 1.0.3\n\nNative Windows hardware brightness control.\nNo periodic polling while idle. No network access, telemetry, animations or GPU rendering loop.\n\nMonitor calls run in a temporary helper with a 9-second timeout. The helper exits when the flyout closes after pending writes finish.\n\nExternal displays use DDC/CI; built-in panels use Windows WMI when available. Unsupported displays are shown explicitly.\n\nClose other brightness utilities to avoid competing monitor commands.",
         AppName,MB_OK|MB_ICONINFORMATION);
     menuActive=false;
     if(selected==4) DestroyWindow(host);
@@ -428,6 +498,7 @@ LRESULT CALLBACK PopupProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
     case WM_KEYDOWN: if(wp==VK_ESCAPE){Hide();return 0;}break;
     case WM_COMMAND:
         if(LOWORD(wp)==RefreshId)Refresh();if(LOWORD(wp)==OptionsId)Options();
+        if(LOWORD(wp)==13)ToggleRestoration();
         if(LOWORD(wp)>=10 && LOWORD(wp)<=12)SetTheme((Theme)(LOWORD(wp)-10));return 0;
     case WM_DRAWITEM:DrawItem((DRAWITEMSTRUCT*)lp);return TRUE;
     case WM_MEASUREITEM: {
@@ -439,7 +510,7 @@ LRESULT CALLBACK PopupProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
             int value=(int)SendMessageW(r.slider,TBM_GETPOS,0,0);
             wchar_t text[20];swprintf_s(text,L"%d%%",value);Text(r.value,text);
             if(LOWORD(wp)==TB_ENDTRACK && r.desired<0 && value==Percent(r.data))return 0;
-            r.desired=value;r.due=GetTickCount64()+(LOWORD(wp)==TB_ENDTRACK?0:130);
+            r.desired=value;r.restoring=false;r.due=GetTickCount64()+(LOWORD(wp)==TB_ENDTRACK?0:130);
             Text(r.status,demo?L"Demo only - no monitor changed":L"Applying brightness...");
             if(!scanning)Dispatch();return 0;
         }
@@ -470,6 +541,12 @@ LRESULT CALLBACK HostProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
     switch(message) {
     case WM_SETTINGCHANGE:case WM_THEMECHANGED:case WM_SYSCOLORCHANGE:ApplyTheme();return 0;
     case ToggleMessage: Show();return 0;
+    // Simulation-only reconnect controls used by the native regression suite.
+    case WM_APP+30:
+        if(demo){demoValues[1]=100;demoReversed=(wp&1)!=0;demoUnavailable=(wp&2)?1:0;demoLateReset=(wp&4)!=0;QueueRecovery();}
+        return 0;
+    case WM_APP+31:return demo?demoScanCount:0;
+    case WM_APP+32:return demo?(recoveryPasses==0 && !topologyTimerArmed && !pending && !needScan):0;
     case TrayMessage:
         switch(LOWORD(lp)) {
         case NIN_SELECT:case NIN_KEYSELECT:Show();break;
@@ -482,13 +559,29 @@ LRESULT CALLBACK HostProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
             else if(GetTickCount64()-started>=TimeoutMs)Complete(true,L"Monitor timed out. Click Refresh to reconnect.");
         }
         if(wp==DragTimer){KillTimer(host,DragTimer);Dispatch();}
-        if(wp==TopologyTimer){KillTimer(host,TopologyTimer);Refresh();}
+        if(wp==TopologyTimer) {
+            KillTimer(host,TopologyTimer);topologyTimerArmed=false;
+            bool busy=pending;
+            for(auto& r:rows)if(r.desired>=0 || BrightnessSliderDragging(r.slider))busy=true;
+            // Finish the user's current adjustment before replacing rows or
+            // reading saved targets. Never discard a newly queued slider value.
+            if(busy)ArmTopologyTimer(2500);
+            else {if(recoveryPasses>0)--recoveryPasses;Refresh();}
+        }
         if(wp==IconTimer) {if(iconRetries>=12)KillTimer(host,IconTimer);else AddIcon();}
         return 0;
     case WM_DISPLAYCHANGE:
         for(auto& r:rows){r.desired=-1;EnableWindow(r.slider,FALSE);}
-        if(IsWindowVisible(popup)){needScan=true;SetTimer(host,TopologyTimer,1400,nullptr);}
-        else {needScan=false;if(!pending)worker.Stop();}
+        QueueRecovery();
+        return 0;
+    case WM_DEVICECHANGE:
+        if((wp==DBT_DEVICEARRIVAL || wp==DBT_DEVICEREMOVECOMPLETE) && lp) {
+            auto* device=(DEV_BROADCAST_HDR*)lp;
+            if(device->dbch_devicetype==DBT_DEVTYP_DEVICEINTERFACE && device->dbch_size>=offsetof(DEV_BROADCAST_DEVICEINTERFACE_W,dbcc_name)) {
+                auto* monitor=(DEV_BROADCAST_DEVICEINTERFACE_W*)lp;
+                if(IsEqualGUID(monitor->dbcc_classguid,MonitorInterface))QueueRecovery();
+            }
+        }
         return 0;
     case WM_POWERBROADCAST:
         if(wp==PBT_POWERSETTINGCHANGE && lp) {
@@ -497,16 +590,18 @@ LRESULT CALLBACK HostProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
                 DWORD state=0;CopyMemory(&state,setting->Data,sizeof(state));
                 bool woke=lastConsoleDisplayState!=MAXDWORD && lastConsoleDisplayState!=1 && state==1;
                 lastConsoleDisplayState=state;
-                if(woke && IsWindowVisible(popup))SetTimer(host,TopologyTimer,1400,nullptr);
+                if(woke)QueueRecovery();
             }
         }
         if(wp==PBT_APMSUSPEND) {
             KillTimer(host,BusyTimer);KillTimer(host,DragTimer);KillTimer(host,TopologyTimer);
+            topologyTimerArmed=false;recoveryPasses=0;
             worker.Stop();pending=false;scanning=false;needScan=false;
+            EnableWindow(refreshButton,TRUE);
             for(auto& r:rows){r.desired=-1;EnableWindow(r.slider,FALSE);}
         }
         if(wp==PBT_APMRESUMEAUTOMATIC || wp==PBT_APMRESUMESUSPEND) {
-            if(IsWindowVisible(popup))SetTimer(host,TopologyTimer,1800,nullptr);
+            QueueRecovery();
         }
         return TRUE;
     case WM_QUERYENDSESSION:return TRUE;
@@ -550,7 +645,7 @@ bool RegisterInstall(const std::wstring& dir) {
     if(RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\SteadyBrightness",0,nullptr,0,KEY_SET_VALUE,nullptr,&key,nullptr)!=ERROR_SUCCESS)return false;
     bool ok=true;
     auto set=[&](const wchar_t* name,const std::wstring& value){ if(RegSetValueExW(key,name,0,REG_SZ,(const BYTE*)value.c_str(),(DWORD)((value.size()+1)*sizeof(wchar_t)))!=ERROR_SUCCESS)ok=false; };
-    set(L"DisplayName",AppName);set(L"DisplayVersion",L"1.0.2");set(L"Publisher",L"Steady Brightness contributors");
+    set(L"DisplayName",AppName);set(L"DisplayVersion",L"1.0.3");set(L"Publisher",L"Steady Brightness contributors");
     set(L"InstallLocation",dir);set(L"DisplayIcon",dir+L"\\SteadyBrightness.exe");
     wchar_t system[MAX_PATH];GetSystemDirectoryW(system,ARRAYSIZE(system));
     set(L"UninstallString",L"\""+std::wstring(system)+L"\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \""+dir+L"\\Uninstall.ps1\"");
@@ -591,6 +686,8 @@ int WINAPI wWinMain(HINSTANCE inst,HINSTANCE,PWSTR,int) {
     }
     if(has(L"--install")){LocalFree(argv);return Install();}
     demo=has(L"--demo");faultHang=has(L"--test-timeout");faultCrash=has(L"--test-crash");testMode=demo||faultHang||faultCrash;
+    if(testMode){demoSettingsKey=L"Software\\SteadyBrightness.Tests\\"+std::to_wstring(GetCurrentProcessId());brightnessMemory.UseKey(demoSettingsKey);}
+    restoreBrightness=testMode || ReadDword(L"Software\\SteadyBrightness",L"RestoreBrightness",1)!=0;
     bool backgroundStart=has(L"--background"),show=!backgroundStart||testMode;LocalFree(argv);
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     SetCurrentProcessExplicitAppUserModelID(L"SteadyBrightness.Tray.1");
@@ -619,13 +716,18 @@ int WINAPI wWinMain(HINSTANCE inst,HINSTANCE,PWSTR,int) {
     SendMessageW(refreshButton,WM_SETFONT,(WPARAM)bodyFont,TRUE);SendMessageW(optionsButton,WM_SETFONT,(WPARAM)bodyFont,TRUE);
     taskbarCreated=RegisterWindowMessageW(L"TaskbarCreated");
     powerNotification=RegisterPowerSettingNotification(host,&ConsoleDisplayState,DEVICE_NOTIFY_WINDOW_HANDLE);
+    DEV_BROADCAST_DEVICEINTERFACE_W filter{};filter.dbcc_size=sizeof(filter);filter.dbcc_devicetype=DBT_DEVTYP_DEVICEINTERFACE;filter.dbcc_classguid=MonitorInterface;
+    if(!testMode)monitorNotification=RegisterDeviceNotificationW(host,&filter,DEVICE_NOTIFY_WINDOW_HANDLE);
     ApplyTheme();Layout();if(!testMode)AddIcon();if(show)Show(false);
+    if(!show && restoreBrightness && !testMode)Refresh();
     MSG message;
     while(GetMessageW(&message,nullptr,0,0)>0) {
         if(message.message==WM_KEYDOWN && message.wParam==VK_ESCAPE && IsWindowVisible(popup)){Hide();continue;}
         if(!IsWindowVisible(popup)||!IsDialogMessageW(popup,&message)){TranslateMessage(&message);DispatchMessageW(&message);}
     }
     if(powerNotification)UnregisterPowerSettingNotification(powerNotification);
+    if(monitorNotification)UnregisterDeviceNotification(monitorNotification);
+    if(!demoSettingsKey.empty()){RegDeleteKeyW(HKEY_CURRENT_USER,demoSettingsKey.c_str());RegDeleteKeyW(HKEY_CURRENT_USER,L"Software\\SteadyBrightness.Tests");}
     DestroyRows();DeleteObject(bodyFont);DeleteObject(valueFont);DeleteObject(smallFont);DeleteObject(background);DestroyIcon(icon);
     CloseHandle(instanceMutex);return 0;
 }

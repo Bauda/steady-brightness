@@ -22,6 +22,7 @@ A small native Windows app designed to sit quietly beside the clock. No Electron
 - Isolated monitor helper with an approximately nine-second timeout so a stuck driver call does not block the tray.
 - Event-driven operation: no periodic idle polling, network calls, telemetry, updater, animation loop, or continuous GPU rendering.
 - Optional startup at sign-in, portable use, and installation for the current user.
+- Remembers each external monitor's brightness and restores it after wake or reconnect, including when the flyout is closed. Recovery checks stop after three passes.
 
 ## Install
 
@@ -51,6 +52,8 @@ A local Windows 11 x64 validation of version 1.0.2 recorded approximately **15.1
 Wake it, enable DDC/CI in its on-screen menu, and press **Refresh**. Close other brightness apps while troubleshooting to avoid competing commands. Try a direct connection if using a dock or adapter. Steady Brightness cannot provide hardware brightness on every display path. It does not use a dimming overlay or alter gamma.
 
 See the [troubleshooting guide](docs/troubleshooting.md) before [reporting a compatibility problem](https://github.com/Bauda/steady-brightness/issues/new/choose). Reports of successful setups are welcome too.
+
+Some monitors reset brightness when powered on. **Options > Restore brightness after wake** is enabled by default: choose your preferred level once, and the app remembers confirmed changes for that device. Windows monitor/device/resume events trigger a short recovery sequence. If a monitor keeps its connection alive and Windows reports no event, reopening the flyout or pressing Refresh also restores its saved level. Turn the option off to let changes made through the monitor's own menu take priority. Built-in laptop panels remain under Windows power management.
 
 ## Build and contribute
 
