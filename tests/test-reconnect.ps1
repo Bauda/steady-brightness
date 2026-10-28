@@ -9,7 +9,7 @@ function Wait-Recovery {
     Assert-True ($done -eq 1) 'reconnect work ends after a bounded recovery burst'
 }
 function Sliders {
-    return @(Child-Controls $flyout | Where-Object Class -eq 'SteadyBrightness.Slider.1' | Sort-Object Id)
+    return @(Child-Controls $flyout | Where-Object { $_.Class -eq 'SteadyBrightness.Slider.1' -and $_.Id -ge 100 } | Sort-Object Id)
 }
 function Set-Level($control,[int]$percent) {
     [void][BrightnessTestNative]::SendMessage($control.Handle,0x405,[IntPtr]1,[IntPtr]$percent)

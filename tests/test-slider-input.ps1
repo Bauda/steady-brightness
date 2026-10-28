@@ -91,7 +91,7 @@ function Key($control,[int]$code){
 if($OnlyInputHelpers){return}
 try{
  Launch-Test '--demo'
- $sliders=@(Child-Controls $flyout|Where-Object { $_.Class -in @('msctls_trackbar32','SteadyBrightness.Slider.1') }|Sort-Object Id)
+ $sliders=@(Child-Controls $flyout|Where-Object { $_.Visible -and $_.Class -in @('msctls_trackbar32','SteadyBrightness.Slider.1') }|Sort-Object Id)
  foreach($control in $sliders){Cache-Travel $control}
  [uint32]$owner=0;[void][SliderInputNative]::GetWindowThreadProcessId($sliders[0].Handle,[ref]$owner)
  Assert-True ($owner -eq $app.Id) 'input tests target their own demo process'

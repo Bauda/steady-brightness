@@ -6,6 +6,12 @@
 
 The UI coalesces slider changes for approximately 130 ms and promptly sends the final value on release. Each row maintains its own desired value. Read-back completion does not pull a held thumb away from the pointer.
 
+Linked mode keeps the physical rows as the command/confirmation model and shows a single accessible slider when multiple displays are present. Enabling it reads the Windows primary row's latest slider target, including 0%, and queues that percentage for every available backend. Manual linked changes and registry saves are coalesced; hardware writes rotate between rows so a continuously moved slider does not starve later monitors. Each monitor still uses its own range conversion and read-back verification. Partial failures remain visible and Refresh retries them.
+
+Native link-button notifications defer the mode switch until the button finishes processing its mouse/capture state. Layout and positioning invalidate the entire flyout and its children without reusing old window pixels; reentrant DPI changes queue one final layout pass. Buttons reserve measured caption padding and use the rounded accent border for keyboard focus. Linked mode omits the redundant normal footer; helper errors expand the footer temporarily and partial sync errors remain beside the slider. These updates run only in response to UI events.
+
+`LinkedBrightness` in the settings key encodes the mode and shared target together (0 means off; 1..101 means 0..100%). New settings default to unlinked. The shared target takes precedence over individual saved levels while linked, including after startup or reconnect. With one display the original UI remains; its slider updates the shared target, and returning displays join it. The existing wake-restoration opt-out still stops hidden automatic recovery. No additional continuous timer or resident helper is introduced.
+
 ## Monitor helper
 
 The same executable runs in `--worker` mode with explicitly inherited mapping/event handles and a parent-process handle. `common.h` defines the bounded shared-memory protocol (up to 32 entries). A job object ties helper lifetime to the parent. The UI supervises commands with an approximately nine-second timeout, kills a hung helper, and offers recovery through Refresh. Hiding the flyout ends the helper after pending writes finish.

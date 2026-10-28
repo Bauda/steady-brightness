@@ -294,7 +294,7 @@ int DiagnosticMain(const wchar_t* path, bool exercise) {
     FILE* f = nullptr; if (_wfopen_s(&f, path, L"w, ccs=UTF-8") || !f) return 2;
     Shared shared{}; shared.version = ProtocolVersion;
     Hardware hardware(shared); hardware.ScanAll();
-    fwprintf(f, L"Steady Brightness 1.0.3 - %s\nDetected: %lu\n", exercise ? L"hardware write/read/restore test" : L"read-only monitor probe", shared.count);
+    fwprintf(f, L"Steady Brightness 1.0.4 - %s\nDetected: %lu\n", exercise ? L"hardware write/read/restore test" : L"read-only monitor probe", shared.count);
     int failures = 0;
     for (DWORD i = 0; i < shared.count; ++i) {
         auto& m = shared.monitors[i];

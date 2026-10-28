@@ -11,6 +11,22 @@ class BrightnessMemory {
 public:
     explicit BrightnessMemory(const wchar_t* path) : key(path) {}
     void UseKey(const std::wstring& path) { key = path; }
+    // One value keeps mode and target together: 0 is unlinked, 1..101 is 0..100%.
+    int ReadLink() const {
+        DWORD value=0,bytes=sizeof(value);
+        if(RegGetValueW(HKEY_CURRENT_USER,key.c_str(),L"LinkedBrightness",RRF_RT_REG_DWORD,
+            nullptr,&value,&bytes)!=ERROR_SUCCESS || value<1 || value>101)return -1;
+        return (int)value-1;
+    }
+    bool SaveLink(int percent) const {
+        if(percent<-1 || percent>100)return false;
+        if(ReadLink()==percent)return true;
+        HKEY opened=nullptr;
+        if(RegCreateKeyExW(HKEY_CURRENT_USER,key.c_str(),0,nullptr,0,KEY_SET_VALUE,nullptr,&opened,nullptr)!=ERROR_SUCCESS)return false;
+        DWORD value=(DWORD)(percent+1);
+        LONG error=RegSetValueExW(opened,L"LinkedBrightness",0,REG_DWORD,(BYTE*)&value,sizeof(value));
+        RegCloseKey(opened);return error==ERROR_SUCCESS;
+    }
     static bool Eligible(const MonitorData& m) {
         return m.persistentId[0] && m.maximum > m.minimum &&
             (m.backend == DdcVcp || m.backend == DdcHigh || m.backend == Nvidia);

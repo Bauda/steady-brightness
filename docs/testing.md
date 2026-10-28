@@ -12,6 +12,8 @@ The runner uses separate processes for integration and UI Automation checks. It 
 
 The native `memory-tests.exe` checks persisted values, valid boundaries, missing/ambiguous device identities, and display renumbering in a temporary registry key. `test-reconnect.ps1` simulates Samsung firmware returning to 100%, unavailable reads, reordered displays, a later reset during wake-up, hidden-flyout recovery, opt-out behavior, and the end of the finite retry sequence. It uses simulated monitors only and never changes physical brightness.
 
+`test-linked.ps1` checks adoption of the primary monitor (including 0% and a primary that is not the first row), one accessible unified slider, independent controls after unlinking, final-value coalescing, partial/unavailable monitor failures, reconnect recovery, single-monitor transitions, persisted mode/target, and GDI stability through repeated toggles. The native tests check link settings across new storage instances. All use isolated demo preferences and simulated brightness. Linked screenshots are captured in light/dark/system themes.
+
 For input/painting and light/dark persistence checks on an unlocked, interactive Windows desktop:
 
 ```powershell
@@ -19,6 +21,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test.ps1 -Visual
 ```
 
 Visual checks compare live slider painting against a full repaint, exercise direct track clicks, dragging, cancellation, endpoints, keyboard input, disabled controls, themes, and accessible values. They temporarily change the app's theme preference and restore it afterward. Do not interact with the test flyout or run multiple suites concurrently. Pixel checks require an unobscured desktop and are not included in hosted CI. Windows PowerShell provides the test harness's .NET UI Automation assemblies; these are not app runtime requirements.
+
+`test-linked-layout.ps1` sends native button mouse clicks and compares the whole flyout's live pixels with a forced repaint, without hiding/reopening it. It checks linked/unlinked transitions in light/dark themes and simulated 100–200% DPI layouts, button padding and gaps, the compact linked footer, visible helper errors, and recovery back to the compact layout. This exercises software scaling, not a physical mixed-DPI monitor setup.
 
 Results and screenshots go into ignored `test-results/`. GitHub Actions builds on Windows, runs nonvisual checks, and verifies release packaging. CodeQL separately scans the C++ code. CI is not a hardware compatibility test.
 

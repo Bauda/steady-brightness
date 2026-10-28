@@ -78,7 +78,7 @@ if ($HelpersOnly) { return }
 try {
  Launch-Test '--demo'
  $controls = Child-Controls $flyout
- Assert-True (@($controls | Where-Object { $_.Class -in @('msctls_trackbar32','SteadyBrightness.Slider.1') }).Count -eq 2) 'one independent slider per display'
+ Assert-True (@($controls | Where-Object { $_.Visible -and $_.Class -in @('msctls_trackbar32','SteadyBrightness.Slider.1') }).Count -eq 2) 'one independent slider per display'
  Assert-True (@($controls | Where-Object {$_.Text -eq '55%'}).Count -eq 1) 'first display initial value'
  Assert-True (@($controls | Where-Object {$_.Text -eq '40%'}).Count -eq 1) 'second display initial value'
  $slider = $controls | Where-Object Id -eq 100 | Select-Object -First 1

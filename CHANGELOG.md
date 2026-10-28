@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.4
+
+- Add **Link monitors**: start from the primary monitor's brightness and control all monitors with one unified slider. Unlink to return to independent controls at their current brightness.
+- Hide link controls with one display. Remember linked mode and its target across launches, and synchronize returning monitors using the existing bounded recovery sequence.
+- Report partial synchronization failures and continue controlling available displays. Coalesce shared updates and rotate hardware writes without adding continuous polling.
+- Add simulated linked-mode, accessibility, single-display transition, persistence, and resource regression coverage.
+- Fix first-click flyout repainting and legacy dotted button focus artifacts. Add measured button padding and keep keyboard focus visible with an accent outline.
+- Remove the redundant confirmation footer in linked mode and compact the layout, while preserving error messages and the footer in independent mode.
+
 ## 1.0.3
 
 - Remember confirmed brightness for each external monitor and restore it after power-on, reconnect, or system resume, including while the flyout is hidden.

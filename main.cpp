@@ -24,11 +24,12 @@ namespace {
 constexpr wchar_t AppName[] = L"Steady Brightness";
 constexpr wchar_t HostClass[] = L"SteadyBrightness.Host.1";
 constexpr UINT TrayMessage = WM_APP + 1, ToggleMessage = WM_APP + 2;
+constexpr UINT LayoutMessage = WM_APP + 3, LinkMessage = WM_APP + 4;
 constexpr UINT BusyTimer = 1, DragTimer = 2, TopologyTimer = 3, IconTimer = 4;
-constexpr UINT RefreshId = 20, OptionsId = 21, SliderBase = 100;
+constexpr UINT RefreshId = 20, OptionsId = 21, LinkId = 22, SharedSliderId = 99, SliderBase = 100;
 constexpr DWORD TimeoutMs = 9000;
 HINSTANCE instance;
-HWND host, popup, refreshButton, optionsButton, generalStatus;
+HWND host, popup, refreshButton, optionsButton, linkButton, generalStatus;
 HFONT bodyFont, valueFont, smallFont;
 HBRUSH background;
 enum Theme { FollowWindows, Light, Dark };
@@ -39,13 +40,19 @@ HICON icon;
 UINT taskbarCreated;
 UINT dpi = 96;
 bool menuActive = false, scanning = false, needScan = false, pending = false, testMode = false;
+bool generalError=false,layoutActive=false,layoutPending=false;
 bool demo = false, faultHang = false, faultCrash = false;
 bool restoreBrightness=true, activeRestore=false, topologyTimerArmed=false;
 int recoveryPasses=0;
 BrightnessMemory brightnessMemory(L"Software\\SteadyBrightness");
 std::wstring demoSettingsKey;
-int demoValues[2]{55,40}, demoScanCount=0, demoUnavailable=0;
-bool demoReversed=false, demoLateReset=false;
+int demoValues[2]{55,40}, demoScanCount=0, demoUnavailable=0, demoCount=2;
+bool demoReversed=false, demoLateReset=false, demoPrimarySecond=false, demoFailWrite=false;
+int linkedLevel=-1;
+bool linkSaved=true;
+bool linkDirty=false;
+ULONGLONG linkDue=0;
+size_t nextWrite=0;
 ULONGLONG started = 0;
 int activeIndex = -1;
 LONG activeCommand = 0;
@@ -62,10 +69,13 @@ struct Row {
     MonitorData data{};
     HWND name = nullptr, value = nullptr, slider = nullptr, status = nullptr;
     int desired = -1;
-    bool restoring=false, persistentUnique=false;
+    bool restoring=false, persistentUnique=false, failedChange=false;
     ULONGLONG due = 0;
 };
 std::vector<Row> rows;
+Row sharedRow;
+bool Unified() { return linkedLevel>=0 && rows.size()>1; }
+void UpdateLinkedStatus();
 struct MenuEntry {
     MSAAMENUINFO accessible{};
     UINT id;const wchar_t* text;bool checked,separator;
@@ -216,37 +226,90 @@ void DestroyRows() {
     for (auto& r : rows) { DestroyWindow(r.name); DestroyWindow(r.value); DestroyWindow(r.slider); DestroyWindow(r.status); }
     rows.clear();
 }
+void CreateRowControls(Row& r, UINT id, const wchar_t* name) {
+    r.name=Label(name,bodyFont,SS_ENDELLIPSIS);
+    r.value=Label(L"",valueFont,SS_RIGHT);
+    r.status=Label(L"",smallFont,SS_ENDELLIPSIS);
+    r.slider=CreateBrightnessSlider(instance,popup,id,name);
+    SendMessageW(r.slider,TBM_SETRANGE,FALSE,MAKELPARAM(0,100));
+    SendMessageW(r.slider,TBM_SETPAGESIZE,0,10);SendMessageW(r.slider,TBM_SETLINESIZE,0,1);
+}
+void SetRowLevel(Row& r,int value) {
+    SendMessageW(r.slider,TBM_SETPOS,TRUE,value);
+    wchar_t text[20];swprintf_s(text,L"%d%%",value);Text(r.value,text);
+}
+void ShowRow(Row& r,bool visible) {
+    for(HWND control:{r.name,r.value,r.slider,r.status})ShowWindow(control,visible?SW_SHOWNA:SW_HIDE);
+}
+int PrimaryIndex() {
+    for(size_t i=0;i<rows.size();++i)if(rows[i].data.primary)return (int)i;
+    return -1;
+}
 void PositionPopup();
 void Layout() {
+    // Moving between monitors can send WM_DPICHANGED during the resize.
+    // Finish this layout, then run one fresh pass with the new DPI.
+    if(layoutActive) {
+        if(!layoutPending){layoutPending=true;PostMessageW(popup,LayoutMessage,0,0);}
+        return;
+    }
+    layoutActive=true;
     int width = Px(376), top = 20, rowHeight = 102;
-    int count = (int)rows.size();
+    bool unified=Unified();
+    bool showNotice=!unified || generalError;
+    int footer=showNotice?100:72;
+    int count = unified?1:(int)rows.size();
     int maxHeight = 850;
     MONITORINFO mi{sizeof(mi)}; GetMonitorInfoW(MonitorFromWindow(popup, MONITOR_DEFAULTTONEAREST), &mi);
     maxHeight = std::max(150, MulDiv(mi.rcWork.bottom - mi.rcWork.top, 96, (int)dpi) - 30);
-    int height = std::min(maxHeight, 96 + rowHeight * count);
+    int height = std::min(maxHeight, footer + rowHeight * count);
     // Rows scroll using a standard vertical scrollbar when many displays are present.
     SCROLLINFO info{sizeof(info), SIF_RANGE | SIF_PAGE | SIF_POS};
-    info.nMin = 0; info.nMax = std::max(0, count * rowHeight - 1); info.nPage = (UINT)std::max(1, height - 96);
+    info.nMin = 0; info.nMax = std::max(0, count * rowHeight - 1); info.nPage = (UINT)std::max(1, height - footer);
     SCROLLINFO old{sizeof(old), SIF_POS}; GetScrollInfo(popup, SB_VERT, &old); info.nPos = old.nPos;
     SetScrollInfo(popup, SB_VERT, &info, TRUE); info.fMask = SIF_POS; GetScrollInfo(popup, SB_VERT, &info);
     RECT rect{0,0,width,Px(height)};
     AdjustWindowRectEx(&rect, (DWORD)GetWindowLongPtrW(popup, GWL_STYLE), FALSE, (DWORD)GetWindowLongPtrW(popup, GWL_EXSTYLE));
-    SetWindowPos(popup, nullptr, 0,0,rect.right-rect.left,rect.bottom-rect.top, SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);
+    SetWindowPos(popup, nullptr, 0,0,rect.right-rect.left,rect.bottom-rect.top, SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOCOPYBITS);
     RECT client{}; GetClientRect(popup,&client); width = client.right;
+    for(auto& r:rows)ShowRow(r,false);
+    ShowRow(sharedRow,false);
     for (int i=0;i<count;++i) {
-        auto& r = rows[i]; int y = top + i * rowHeight - info.nPos;
-        bool visible = y >= top && y + rowHeight <= height - 62;
-        ShowWindow(r.name, visible ? SW_SHOWNA : SW_HIDE); ShowWindow(r.value, visible ? SW_SHOWNA : SW_HIDE);
-        ShowWindow(r.slider, visible ? SW_SHOWNA : SW_HIDE); ShowWindow(r.status, visible ? SW_SHOWNA : SW_HIDE);
-        MoveWindow(r.name, Px(22), Px(y), width - Px(110), Px(24), TRUE);
-        MoveWindow(r.value, width - Px(80), Px(y-1), Px(58), Px(27), TRUE);
-        MoveWindow(r.slider, Px(18), Px(y+28), width - Px(36), Px(30), TRUE);
-        MoveWindow(r.status, Px(22), Px(y+65), width - Px(44), Px(25), TRUE);
+        auto& r = unified?sharedRow:rows[i]; int y = top + i * rowHeight - info.nPos;
+        bool visible = y >= top && y + rowHeight <= height - (showNotice?66:38);
+        ShowRow(r,visible);
+        MoveWindow(r.name, Px(22), Px(y), width - Px(110), Px(24), FALSE);
+        MoveWindow(r.value, width - Px(80), Px(y-1), Px(58), Px(27), FALSE);
+        MoveWindow(r.slider, Px(18), Px(y+28), width - Px(36), Px(30), FALSE);
+        MoveWindow(r.status, Px(22), Px(y+65), width - Px(44), Px(25), FALSE);
     }
-    MoveWindow(generalStatus, Px(22), Px(height - 72), width - Px(44), Px(22), TRUE);
-    MoveWindow(refreshButton, Px(22), Px(height - 43), Px(100), Px(28), TRUE);
-    MoveWindow(optionsButton, width - Px(122), Px(height - 43), Px(100), Px(28), TRUE);
-    InvalidateRect(popup, nullptr, TRUE);
+    MoveWindow(generalStatus, Px(22), Px(height - 76), width - Px(44), Px(22), FALSE);
+    ShowWindow(generalStatus,showNotice?SW_SHOWNA:SW_HIDE);
+    int sideWidth=Px(100),linkWidth=0;
+    if(rows.size()>1) {
+        // Size for the longer label in both modes, with 12px padding per side.
+        HDC dc=GetDC(popup);auto oldFont=SelectObject(dc,bodyFont);SIZE label{};
+        constexpr wchar_t labelText[]=L"Unlink monitors";
+        GetTextExtentPoint32W(dc,labelText,ARRAYSIZE(labelText)-1,&label);
+        SelectObject(dc,oldFont);ReleaseDC(popup,dc);
+        linkWidth=label.cx+Px(24);
+        sideWidth=(width-Px(44)-Px(16)-linkWidth)/2;
+    }
+    MoveWindow(refreshButton, Px(22), Px(height - 47), sideWidth, Px(32), FALSE);
+    MoveWindow(optionsButton, width - Px(22)-sideWidth, Px(height - 47), sideWidth, Px(32), FALSE);
+    MoveWindow(linkButton,Px(30)+sideWidth,Px(height-47),linkWidth,Px(32),FALSE);
+    ShowWindow(linkButton,rows.size()>1?SW_SHOWNA:SW_HIDE);
+    Text(linkButton,linkedLevel>=0?L"Unlink monitors":L"Link monitors");
+    int primary=PrimaryIndex();
+    EnableWindow(linkButton,!scanning && (linkedLevel>=0 || (primary>=0 && rows[primary].data.backend!=Unavailable)));
+    if(unified)SetRowLevel(sharedRow,linkedLevel);
+    layoutActive=false;
+    RedrawWindow(popup,nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_FRAME|RDW_ALLCHILDREN);
+}
+void GeneralStatus(const wchar_t* text,bool error=false) {
+    bool relayout=Unified() && generalError!=error;
+    generalError=error;Text(generalStatus,text);
+    if(relayout){Layout();if(IsWindowVisible(popup))PositionPopup();}
 }
 void MakeRows(const MonitorData* monitors, DWORD count) {
     DestroyRows(); count = std::min<DWORD>(count, MaxMonitors); rows.resize(count);
@@ -255,20 +318,46 @@ void MakeRows(const MonitorData* monitors, DWORD count) {
         r.persistentUnique=BrightnessMemory::Unique(monitors,count,i);
         std::wstring name = std::to_wstring(i+1) + L". " + r.data.name;
         if (r.data.primary) name += L" (main)";
-        r.name = Label(name.c_str(), bodyFont, SS_ENDELLIPSIS);
-        r.value = Label(L"", valueFont, SS_RIGHT);
-        r.status = Label(r.data.note, smallFont, SS_ENDELLIPSIS);
-        r.slider = CreateBrightnessSlider(instance,popup,SliderBase+i,name.c_str());
-        SendMessageW(r.slider, TBM_SETRANGE, FALSE, MAKELPARAM(0,100));
-        SendMessageW(r.slider, TBM_SETPAGESIZE, 0, 10); SendMessageW(r.slider, TBM_SETLINESIZE, 0, 1);
-        SendMessageW(r.slider, TBM_SETPOS, TRUE, Percent(r.data));
+        CreateRowControls(r,SliderBase+i,name.c_str());Text(r.status,r.data.note);
+        SetRowLevel(r,Percent(r.data));
         EnableWindow(r.slider, r.data.backend != Unavailable);
-        wchar_t percent[20]; swprintf_s(percent, L"%d%%", Percent(r.data)); Text(r.value, r.data.backend ? percent : L"--");
+        if(r.data.backend==Unavailable)Text(r.value,L"--");
     }
-    Text(generalStatus, count ? L"Changes are checked with your monitor." : L"No active displays found. Click Refresh to retry.");
+    GeneralStatus(count ? L"Changes are checked with your monitor." : L"No active displays found. Click Refresh to retry.",count==0);
     Layout(); if (IsWindowVisible(popup)) PositionPopup();
 }
+void UpdateLinkedStatus() {
+    if(linkedLevel<0)return;
+    bool queued=pending,available=false,problem=false;
+    for(auto& r:rows) {
+        queued=queued || r.desired>=0;
+        available=available || r.data.backend!=Unavailable;
+        problem=problem || r.data.backend==Unavailable || r.failedChange || Percent(r.data)!=linkedLevel;
+    }
+    EnableWindow(sharedRow.slider,available && !scanning);
+    Text(sharedRow.status,queued?L"Applying brightness to monitors...":problem?L"Some monitors did not sync. Click Refresh.":demo?L"Demo only - no monitors changed":L"Brightness confirmed by all monitors");
+    if(!linkSaved)Text(sharedRow.status,L"Linked setting could not be saved.");
+}
+void QueueLinked(int value,ULONGLONG due,bool save) {
+    linkedLevel=value;
+    if(save){linkDirty=true;linkDue=due;}
+    SetRowLevel(sharedRow,value);
+    for(auto& r:rows) {
+        if(r.data.backend==Unavailable)continue;
+        r.failedChange=false;r.restoring=false;r.due=due;
+        // Also replace queued/in-flight values, even when the read value matches.
+        r.desired=(pending || r.desired>=0 || Percent(r.data)!=value)?value:-1;
+        SetRowLevel(r,value);
+        Text(r.status,r.desired>=0?L"Applying brightness...":r.data.note);
+        // Matching read-back is already confirmed. Retain it for unlink + wake,
+        // even if this device did not need a write in the current linked session.
+        if(r.desired<0 && r.persistentUnique && !brightnessMemory.Save(r.data,value))
+            Text(r.status,L"Could not remember brightness for this monitor.");
+    }
+    UpdateLinkedStatus();
+}
 void RememberRows() {
+    if(linkedLevel>=0) {QueueLinked(linkedLevel,GetTickCount64(),false);return;}
     for(size_t i=0;i<rows.size();++i) {
         auto& row=rows[i];
         if(!row.persistentUnique)continue;
@@ -298,17 +387,17 @@ void ReadDemo() {
     ++demoScanCount;
     if(demoLateReset && recoveryPasses==1){demoValues[1]=100;demoLateReset=false;}
     MonitorData monitors[2]{};
-    for(int i=0;i<2;++i) {
+    for(int i=0;i<demoCount;++i) {
         int which=demoReversed?1-i:i;
         Copy(monitors[i].name,which?L"C27JG5x":L"XV271U M3");
         Copy(monitors[i].persistentId,which?L"demo:samsung":L"demo:acer");
         swprintf_s(monitors[i].id,L"DISPLAY%d",i+1);
         monitors[i].backend=which && demoUnavailable>0?Unavailable:DdcVcp;
-        monitors[i].maximum=100;monitors[i].current=(DWORD)demoValues[which];monitors[i].primary=which==0;
+        monitors[i].maximum=100;monitors[i].current=(DWORD)demoValues[which];monitors[i].primary=which==(demoPrimarySecond?1:0);
         Copy(monitors[i].note,L"Demo only - no monitor changed");
     }
     if(demoUnavailable>0)--demoUnavailable;
-    MakeRows(monitors,2);RememberRows();
+    MakeRows(monitors,(DWORD)demoCount);RememberRows();
 }
 void AddIcon() {
     tray.cbSize = sizeof(tray); tray.hWnd = host; tray.uID = 1;
@@ -328,34 +417,48 @@ void PositionPopup() {
     int y=point.y-h-Px(10);
     if(y<mi.rcWork.top) y=(int)std::min<LONG>(mi.rcWork.bottom-h,point.y+Px(24));
     y=(int)std::max<LONG>(mi.rcWork.top,y);
-    SetWindowPos(popup,HWND_TOPMOST,x,y,0,0,SWP_NOSIZE | SWP_NOACTIVATE);
+    SetWindowPos(popup,HWND_TOPMOST,x,y,0,0,SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOCOPYBITS);
+    if(IsWindowVisible(popup))RedrawWindow(popup,nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_FRAME|RDW_ALLCHILDREN|RDW_UPDATENOW);
 }
 void Dispatch();
 void StartRequest(LONG command, int index = -1, int percent = 0) {
     if (pending) return;
-    if (!worker.Start()) { Text(generalStatus,L"Could not start monitor helper. Click Refresh to retry.");RetryRecovery();return; }
+    if (!worker.Start()) {
+        for(auto& r:rows){r.desired=-1;r.failedChange=true;EnableWindow(r.slider,FALSE);}
+        UpdateLinkedStatus();EnableWindow(sharedRow.slider,FALSE);
+        GeneralStatus(L"Could not start monitor helper. Click Refresh to retry.",true);RetryRecovery();return;
+    }
     pending = true; activeCommand = command; activeIndex = index; started = GetTickCount64();
-    if (command == Scan) { scanning = true; Text(generalStatus,L"Reading displays..."); EnableWindow(refreshButton,FALSE); }
+    if (command == Scan) { scanning = true; GeneralStatus(L"Reading displays..."); EnableWindow(refreshButton,FALSE);EnableWindow(linkButton,FALSE);EnableWindow(sharedRow.slider,FALSE); }
     worker.shared->command = command; worker.shared->index = index; worker.shared->percent = percent;
     SetEvent(worker.command); SetTimer(host,BusyTimer,40,nullptr);
 }
 void ScheduleDrag() {
     ULONGLONG next = 0, now = GetTickCount64();
     for (auto& r : rows) if (r.desired >= 0) next = !next ? r.due : std::min(next, r.due);
+    if(linkDirty)next=!next?linkDue:std::min(next,linkDue);
     KillTimer(host,DragTimer);
     if (next && !pending) SetTimer(host,DragTimer,(UINT)std::max<ULONGLONG>(1,next>now?next-now:1),nullptr);
 }
 void Dispatch() {
     if (pending) return;
+    if(linkDirty && linkDue<=GetTickCount64()) {
+        linkSaved=brightnessMemory.SaveLink(linkedLevel);linkDirty=false;
+    }
     if (needScan) {
         needScan=false;
         for(auto& r:rows) r.desired=-1;
         StartRequest(Scan); return;
     }
     ULONGLONG now=GetTickCount64();
-    for(size_t i=0;i<rows.size();++i) if(rows[i].desired>=0 && rows[i].due<=now) {
+    for(size_t step=0;step<rows.size();++step) {
+        size_t i=(nextWrite+step)%rows.size();
+        if(rows[i].desired<0 || rows[i].due>now)continue;
         int target=rows[i].desired; rows[i].desired=-1;
         if(demo) {
+            if(demoFailWrite && !_wcsicmp(rows[i].data.persistentId,L"demo:samsung")) {
+                rows[i].failedChange=true;SetRowLevel(rows[i],Percent(rows[i].data));Text(rows[i].status,L"Change not confirmed. Click Refresh to retry.");continue;
+            }
             rows[i].data.current=Raw(rows[i].data,target); Text(rows[i].status,L"Demo only - no monitor changed");
             demoValues[!_wcsicmp(rows[i].data.persistentId,L"demo:samsung")?1:0]=target;
             if(!rows[i].restoring && rows[i].persistentUnique)brightnessMemory.Save(rows[i].data,target);
@@ -364,9 +467,11 @@ void Dispatch() {
         }
         if (!worker.process) { needScan=true; Dispatch(); return; }
         activeRestore=rows[i].restoring;rows[i].restoring=false;
+        nextWrite=(i+1)%rows.size();
         StartRequest(Set,(int)i,target); return;
     }
     ScheduleDrag();
+    UpdateLinkedStatus();
     bool queued=false;for(auto& r:rows) if(r.desired>=0) queued=true;
     if(!queued && !IsWindowVisible(popup)) worker.Stop();
     if(!queued)RetryRecovery();
@@ -378,13 +483,15 @@ void Complete(bool failed, const wchar_t* reason=nullptr) {
     EnableWindow(refreshButton,TRUE);
     if(failed) {
         worker.Stop();
-        for(auto& r:rows) {r.desired=-1; EnableWindow(r.slider,FALSE); Text(r.status,L"Connection lost. Click Refresh to reconnect.");}
-        Text(generalStatus,reason?reason:L"Monitor helper stopped. Click Refresh to reconnect.");
+        for(auto& r:rows) {r.desired=-1;r.failedChange=true; EnableWindow(r.slider,FALSE); Text(r.status,L"Connection lost. Click Refresh to reconnect.");}
+        UpdateLinkedStatus();EnableWindow(sharedRow.slider,FALSE);
+        GeneralStatus(reason?reason:L"Monitor helper stopped. Click Refresh to reconnect.",true);
     } else if(command==Scan) {
         MakeRows(worker.shared->monitors,worker.shared->count);
         RememberRows();
     } else if(command==Set && index>=0 && index<(int)rows.size()) {
         auto& r=rows[index]; r.data=worker.shared->monitors[index];
+        r.failedChange=!worker.shared->success;
         bool remembered=!worker.shared->success || activeRestore || !r.persistentUnique || brightnessMemory.Save(r.data,Percent(r.data));
         if(r.desired<0) {
             if(!BrightnessSliderDragging(r.slider)) {
@@ -393,7 +500,7 @@ void Complete(bool failed, const wchar_t* reason=nullptr) {
             }
             Text(r.status,!remembered?L"Brightness applied, but could not save it.":worker.shared->success?L"Brightness confirmed by monitor":L"Change not confirmed. Click Refresh to retry.");
         }
-        Text(generalStatus,worker.shared->success?L"Changes are checked with your monitor.":L"Monitor did not confirm the requested brightness.");
+        GeneralStatus(worker.shared->success?L"Changes are checked with your monitor.":L"Monitor did not confirm the requested brightness.",!worker.shared->success);
     }
     if(failed) { needScan=false;RetryRecovery();return; }
     Dispatch();
@@ -401,10 +508,12 @@ void Complete(bool failed, const wchar_t* reason=nullptr) {
 void Refresh() {
     if(demo) {ReadDemo();Dispatch();return;}
     for(auto& r:rows) {r.desired=-1;EnableWindow(r.slider,FALSE);}
+    EnableWindow(sharedRow.slider,FALSE);
     needScan=true;Dispatch();
 }
 void Hide() {
     for(auto& row:rows)if(BrightnessSliderDragging(row.slider))CancelBrightnessSliderDrag(row.slider);
+    if(BrightnessSliderDragging(sharedRow.slider))CancelBrightnessSliderDrag(sharedRow.slider);
     ShowWindow(popup,SW_HIDE);
     if(!pending) Dispatch();
 }
@@ -426,6 +535,22 @@ void ToggleRestoration() {
     }
     if(!restoreBrightness){recoveryPasses=0;KillTimer(host,TopologyTimer);topologyTimerArmed=false;}
     Refresh();
+}
+void ToggleLinked() {
+    if(rows.size()<2 || scanning)return;
+    if(linkedLevel>=0) {
+        linkedLevel=-1;linkDirty=false;linkSaved=brightnessMemory.SaveLink(-1);
+    } else {
+        int primary=PrimaryIndex();
+        if(primary<0 || rows[primary].data.backend==Unavailable)return;
+        int value=(int)SendMessageW(rows[primary].slider,TBM_GETPOS,0,0);
+        QueueLinked(value,GetTickCount64(),true);
+    }
+    // Cancel capture before hiding controls, preserving the final queued target.
+    for(auto& row:rows)if(BrightnessSliderDragging(row.slider))CancelBrightnessSliderDrag(row.slider);
+    if(BrightnessSliderDragging(sharedRow.slider))CancelBrightnessSliderDrag(sharedRow.slider);
+    Layout();PositionPopup();Dispatch();
+    if(!linkSaved)GeneralStatus(L"Could not save the linked setting.",true);
 }
 void Options() {
     menuActive=true;
@@ -458,7 +583,7 @@ void Options() {
     if(selected>=10 && selected<=12)SetTheme((Theme)(selected-10));
     if(selected==13)ToggleRestoration();
     if(selected==3) MessageBoxW(popup,
-        L"Steady Brightness 1.0.3\n\nNative Windows hardware brightness control.\nNo periodic polling while idle. No network access, telemetry, animations or GPU rendering loop.\n\nMonitor calls run in a temporary helper with a 9-second timeout. The helper exits when the flyout closes after pending writes finish.\n\nExternal displays use DDC/CI; built-in panels use Windows WMI when available. Unsupported displays are shown explicitly.\n\nClose other brightness utilities to avoid competing monitor commands.",
+        L"Steady Brightness 1.0.4\n\nNative Windows hardware brightness control.\nNo periodic polling while idle. No network access, telemetry, animations or GPU rendering loop.\n\nMonitor calls run in a temporary helper with a 9-second timeout. The helper exits when the flyout closes after pending writes finish.\n\nExternal displays use DDC/CI; built-in panels use Windows WMI when available. Unsupported displays are shown explicitly.\n\nClose other brightness utilities to avoid competing monitor commands.",
         AppName,MB_OK|MB_ICONINFORMATION);
     menuActive=false;
     if(selected==4) DestroyWindow(host);
@@ -474,12 +599,15 @@ void DrawItem(DRAWITEMSTRUCT* item) {
     HDC dc=item->hDC;RECT rect=item->rcItem;
     SaveDC(dc);SetBkMode(dc,TRANSPARENT);SelectObject(dc,bodyFont);SetTextColor(dc,foreground);
     if(item->CtlType==ODT_BUTTON) {
+        if(item->itemState&ODS_DISABLED)SetTextColor(dc,muted);
         FillRect(dc,&rect,background);RECT inner=rect;InflateRect(&inner,-1,-1);
         Fill(dc,inner,(item->itemState&ODS_SELECTED)?trackColor:buttonColor);
-        SetDCPenColor(dc,(item->itemState&ODS_FOCUS)?accent:borderColor);SelectObject(dc,GetStockObject(DC_PEN));SelectObject(dc,GetStockObject(NULL_BRUSH));
+        bool focus=(item->itemState&ODS_FOCUS) && !(item->itemState&ODS_NOFOCUSRECT);
+        SetDCPenColor(dc,focus?accent:borderColor);SelectObject(dc,GetStockObject(DC_PEN));SelectObject(dc,GetStockObject(NULL_BRUSH));
         RoundRect(dc,inner.left,inner.top,inner.right,inner.bottom,Px(6),Px(6));
         wchar_t text[100];GetWindowTextW(item->hwndItem,text,ARRAYSIZE(text));DrawTextW(dc,text,-1,&rect,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-        if(item->itemState&ODS_FOCUS){RECT focus=rect;InflateRect(&focus,-Px(4),-Px(4));DrawFocusRect(dc,&focus);}
+        // The rounded accent border is the focus cue; a second XOR/dotted
+        // rectangle looks pixelated and leaves an artifact after mouse clicks.
     } else if(item->CtlType==ODT_MENU && item->itemData) {
         auto* entry=(MenuEntry*)item->itemData;
         Fill(dc,rect,(item->itemState&ODS_SELECTED)?buttonColor:backgroundColor);
@@ -498,16 +626,34 @@ LRESULT CALLBACK PopupProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
     case WM_KEYDOWN: if(wp==VK_ESCAPE){Hide();return 0;}break;
     case WM_COMMAND:
         if(LOWORD(wp)==RefreshId)Refresh();if(LOWORD(wp)==OptionsId)Options();
+        // Let the native button finish its click/capture painting before the
+        // flyout changes size and position underneath it.
+        if(LOWORD(wp)==LinkId) {
+            if((HWND)lp==linkButton)PostMessageW(window,LinkMessage,0,0);
+            else ToggleLinked();
+        }
         if(LOWORD(wp)==13)ToggleRestoration();
         if(LOWORD(wp)>=10 && LOWORD(wp)<=12)SetTheme((Theme)(LOWORD(wp)-10));return 0;
     case WM_DRAWITEM:DrawItem((DRAWITEMSTRUCT*)lp);return TRUE;
+    case LinkMessage:ToggleLinked();return 0;
+    case LayoutMessage:layoutPending=false;Layout();PositionPopup();return 0;
     case WM_MEASUREITEM: {
         auto* item=(MEASUREITEMSTRUCT*)lp;
         if(item->CtlType==ODT_MENU){item->itemWidth=Px(260);item->itemHeight=Px(32);return TRUE;}break;
     }
     case WM_HSCROLL:
+        if(Unified() && (HWND)lp==sharedRow.slider && IsWindowEnabled(sharedRow.slider)) {
+            int value=(int)SendMessageW(sharedRow.slider,TBM_GETPOS,0,0);
+            QueueLinked(value,GetTickCount64()+(LOWORD(wp)==TB_ENDTRACK?0:130),true);
+            if(!scanning)Dispatch();return 0;
+        }
         for(auto& r:rows)if(r.slider==(HWND)lp && IsWindowEnabled(r.slider)) {
             int value=(int)SendMessageW(r.slider,TBM_GETPOS,0,0);
+            if(Unified())return 0;
+            if(linkedLevel>=0) {
+                QueueLinked(value,GetTickCount64()+(LOWORD(wp)==TB_ENDTRACK?0:130),true);
+                if(!scanning)Dispatch();return 0;
+            }
             wchar_t text[20];swprintf_s(text,L"%d%%",value);Text(r.value,text);
             if(LOWORD(wp)==TB_ENDTRACK && r.desired<0 && value==Percent(r.data))return 0;
             r.desired=value;r.restoring=false;r.due=GetTickCount64()+(LOWORD(wp)==TB_ENDTRACK?0:130);
@@ -523,12 +669,13 @@ LRESULT CALLBACK PopupProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
     case WM_MOUSEWHEEL: SendMessageW(window,WM_VSCROLL,GET_WHEEL_DELTA_WPARAM(wp)>0?SB_LINEUP:SB_LINEDOWN,0);return 0;
     case WM_DPICHANGED: {
         dpi=HIWORD(wp);Fonts();
-        SendMessageW(generalStatus,WM_SETFONT,(WPARAM)smallFont,TRUE);SendMessageW(refreshButton,WM_SETFONT,(WPARAM)bodyFont,TRUE);SendMessageW(optionsButton,WM_SETFONT,(WPARAM)bodyFont,TRUE);
+        SendMessageW(generalStatus,WM_SETFONT,(WPARAM)smallFont,TRUE);SendMessageW(refreshButton,WM_SETFONT,(WPARAM)bodyFont,TRUE);SendMessageW(optionsButton,WM_SETFONT,(WPARAM)bodyFont,TRUE);SendMessageW(linkButton,WM_SETFONT,(WPARAM)bodyFont,TRUE);
         for(auto& r:rows){SendMessageW(r.name,WM_SETFONT,(WPARAM)bodyFont,TRUE);SendMessageW(r.value,WM_SETFONT,(WPARAM)valueFont,TRUE);SendMessageW(r.status,WM_SETFONT,(WPARAM)smallFont,TRUE);}
+        SendMessageW(sharedRow.name,WM_SETFONT,(WPARAM)bodyFont,TRUE);SendMessageW(sharedRow.value,WM_SETFONT,(WPARAM)valueFont,TRUE);SendMessageW(sharedRow.status,WM_SETFONT,(WPARAM)smallFont,TRUE);
         Layout();PositionPopup();return 0;
     }
     case WM_CTLCOLORSTATIC: {
-        bool secondary=(HWND)lp==generalStatus;
+        bool secondary=(HWND)lp==generalStatus || (HWND)lp==sharedRow.status;
         for(auto& r:rows)if((HWND)lp==r.status)secondary=true;
         SetBkMode((HDC)wp,TRANSPARENT);SetTextColor((HDC)wp,secondary?muted:foreground);return (LRESULT)background;
     }
@@ -547,6 +694,12 @@ LRESULT CALLBACK HostProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
         return 0;
     case WM_APP+31:return demo?demoScanCount:0;
     case WM_APP+32:return demo?(recoveryPasses==0 && !topologyTimerArmed && !pending && !needScan):0;
+    case WM_APP+33:
+        if(demo){demoCount=(wp&1)?1:2;demoPrimarySecond=(wp&2)!=0;demoFailWrite=(wp&4)!=0;demoUnavailable=(wp&8)?100:0;Refresh();}return 0;
+    case WM_APP+34:return demo && wp<2?demoValues[wp]:-1;
+    case WM_APP+35:
+        if(demo)GeneralStatus(wp?L"Monitor helper stopped. Click Refresh to reconnect.":L"Changes are checked with your monitor.",wp!=0);
+        return 0;
     case TrayMessage:
         switch(LOWORD(lp)) {
         case NIN_SELECT:case NIN_KEYSELECT:Show();break;
@@ -561,7 +714,7 @@ LRESULT CALLBACK HostProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
         if(wp==DragTimer){KillTimer(host,DragTimer);Dispatch();}
         if(wp==TopologyTimer) {
             KillTimer(host,TopologyTimer);topologyTimerArmed=false;
-            bool busy=pending;
+            bool busy=pending || BrightnessSliderDragging(sharedRow.slider);
             for(auto& r:rows)if(r.desired>=0 || BrightnessSliderDragging(r.slider))busy=true;
             // Finish the user's current adjustment before replacing rows or
             // reading saved targets. Never discard a newly queued slider value.
@@ -572,6 +725,7 @@ LRESULT CALLBACK HostProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
         return 0;
     case WM_DISPLAYCHANGE:
         for(auto& r:rows){r.desired=-1;EnableWindow(r.slider,FALSE);}
+        EnableWindow(sharedRow.slider,FALSE);
         QueueRecovery();
         return 0;
     case WM_DEVICECHANGE:
@@ -599,6 +753,7 @@ LRESULT CALLBACK HostProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
             worker.Stop();pending=false;scanning=false;needScan=false;
             EnableWindow(refreshButton,TRUE);
             for(auto& r:rows){r.desired=-1;EnableWindow(r.slider,FALSE);}
+            EnableWindow(sharedRow.slider,FALSE);
         }
         if(wp==PBT_APMRESUMEAUTOMATIC || wp==PBT_APMRESUMESUSPEND) {
             QueueRecovery();
@@ -645,7 +800,7 @@ bool RegisterInstall(const std::wstring& dir) {
     if(RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\SteadyBrightness",0,nullptr,0,KEY_SET_VALUE,nullptr,&key,nullptr)!=ERROR_SUCCESS)return false;
     bool ok=true;
     auto set=[&](const wchar_t* name,const std::wstring& value){ if(RegSetValueExW(key,name,0,REG_SZ,(const BYTE*)value.c_str(),(DWORD)((value.size()+1)*sizeof(wchar_t)))!=ERROR_SUCCESS)ok=false; };
-    set(L"DisplayName",AppName);set(L"DisplayVersion",L"1.0.3");set(L"Publisher",L"Steady Brightness contributors");
+    set(L"DisplayName",AppName);set(L"DisplayVersion",L"1.0.4");set(L"Publisher",L"Steady Brightness contributors");
     set(L"InstallLocation",dir);set(L"DisplayIcon",dir+L"\\SteadyBrightness.exe");
     wchar_t system[MAX_PATH];GetSystemDirectoryW(system,ARRAYSIZE(system));
     set(L"UninstallString",L"\""+std::wstring(system)+L"\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \""+dir+L"\\Uninstall.ps1\"");
@@ -687,6 +842,7 @@ int WINAPI wWinMain(HINSTANCE inst,HINSTANCE,PWSTR,int) {
     if(has(L"--install")){LocalFree(argv);return Install();}
     demo=has(L"--demo");faultHang=has(L"--test-timeout");faultCrash=has(L"--test-crash");testMode=demo||faultHang||faultCrash;
     if(testMode){demoSettingsKey=L"Software\\SteadyBrightness.Tests\\"+std::to_wstring(GetCurrentProcessId());brightnessMemory.UseKey(demoSettingsKey);}
+    linkedLevel=brightnessMemory.ReadLink();
     restoreBrightness=testMode || ReadDword(L"Software\\SteadyBrightness",L"RestoreBrightness",1)!=0;
     bool backgroundStart=has(L"--background"),show=!backgroundStart||testMode;LocalFree(argv);
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -713,13 +869,15 @@ int WINAPI wWinMain(HINSTANCE inst,HINSTANCE,PWSTR,int) {
     generalStatus=Label(L"Click Refresh to read your displays.",smallFont,SS_ENDELLIPSIS);
     refreshButton=CreateWindowExW(0,L"BUTTON",L"Refresh",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,popup,(HMENU)(INT_PTR)RefreshId,instance,nullptr);
     optionsButton=CreateWindowExW(0,L"BUTTON",L"Options",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,popup,(HMENU)(INT_PTR)OptionsId,instance,nullptr);
-    SendMessageW(refreshButton,WM_SETFONT,(WPARAM)bodyFont,TRUE);SendMessageW(optionsButton,WM_SETFONT,(WPARAM)bodyFont,TRUE);
+    linkButton=CreateWindowExW(0,L"BUTTON",L"Link monitors",WS_CHILD|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,popup,(HMENU)(INT_PTR)LinkId,instance,nullptr);
+    CreateRowControls(sharedRow,SharedSliderId,L"All monitors");ShowRow(sharedRow,false);
+    SendMessageW(refreshButton,WM_SETFONT,(WPARAM)bodyFont,TRUE);SendMessageW(optionsButton,WM_SETFONT,(WPARAM)bodyFont,TRUE);SendMessageW(linkButton,WM_SETFONT,(WPARAM)bodyFont,TRUE);
     taskbarCreated=RegisterWindowMessageW(L"TaskbarCreated");
     powerNotification=RegisterPowerSettingNotification(host,&ConsoleDisplayState,DEVICE_NOTIFY_WINDOW_HANDLE);
     DEV_BROADCAST_DEVICEINTERFACE_W filter{};filter.dbcc_size=sizeof(filter);filter.dbcc_devicetype=DBT_DEVTYP_DEVICEINTERFACE;filter.dbcc_classguid=MonitorInterface;
     if(!testMode)monitorNotification=RegisterDeviceNotificationW(host,&filter,DEVICE_NOTIFY_WINDOW_HANDLE);
     ApplyTheme();Layout();if(!testMode)AddIcon();if(show)Show(false);
-    if(!show && restoreBrightness && !testMode)Refresh();
+    if(!show && (restoreBrightness || linkedLevel>=0) && !testMode)Refresh();
     MSG message;
     while(GetMessageW(&message,nullptr,0,0)>0) {
         if(message.message==WM_KEYDOWN && message.wParam==VK_ESCAPE && IsWindowVisible(popup)){Hide();continue;}
