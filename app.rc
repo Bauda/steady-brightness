@@ -3,8 +3,8 @@
 2 RCDATA "uninstall.ps1"
 3 RCDATA "uninstall.cmd"
 1 VERSIONINFO
-FILEVERSION 1,0,3,0
-PRODUCTVERSION 1,0,3,0
+FILEVERSION 1,0,4,0
+PRODUCTVERSION 1,0,4,0
 FILEFLAGSMASK 0x3fL
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
@@ -15,11 +15,11 @@ BEGIN
   BEGIN
    VALUE "CompanyName", "Steady Brightness contributors"
    VALUE "FileDescription", "Steady Brightness"
-   VALUE "FileVersion", "1.0.3"
+   VALUE "FileVersion", "1.0.4"
    VALUE "InternalName", "SteadyBrightness"
    VALUE "OriginalFilename", "SteadyBrightness.exe"
    VALUE "ProductName", "Steady Brightness"
-   VALUE "ProductVersion", "1.0.3"
+   VALUE "ProductVersion", "1.0.4"
   END
  END
  BLOCK "VarFileInfo"

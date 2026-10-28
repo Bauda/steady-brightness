@@ -18,6 +18,10 @@ Click the sun beside the clock to show the flyout. If hidden under **^**, drag i
 
 Choose **Options > Theme: Use Windows setting**, **Light**, or **Dark**. Escape or clicking elsewhere hides the flyout. Arrow keys step by 1%; Page keys step by 10%; Home/End select 0/100%.
 
+With two or more displays, **Link monitors** first applies the primary monitor's current slider level to the other displays, then replaces the individual controls with one **All monitors** slider. **Unlink monitors** restores the individual sliders at their current levels. The link button is hidden with one display. Linked mode and its shared target survive app restarts; reconnected displays join the saved target. A single remaining display keeps the original UI, and its changes update the linked target for when other displays return.
+
+Linking requires a readable primary display. Unavailable secondary displays do not block the others: the unified slider reports that some displays did not sync. Wake recovery uses the existing bounded event sequence when **Restore brightness after wake** is enabled; opening the flyout or Refresh also retries synchronization. Equal hardware percentages can look different across monitor models.
+
 ## Verify a download
 
 The release includes `SHA256SUMS`, `SteadyBrightness.exe`, and the ZIP. In PowerShell, after downloading the ZIP and checksum file into the same folder:

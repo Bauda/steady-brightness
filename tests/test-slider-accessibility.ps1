@@ -5,7 +5,7 @@ Add-Type -AssemblyName UIAutomationClient
 $results=[Collections.Generic.List[string]]::new()
 try{
  Launch-Test '--demo'
- $controls=@(Child-Controls $flyout|Where-Object Class -eq 'SteadyBrightness.Slider.1'|Sort-Object Id)
+ $controls=@(Child-Controls $flyout|Where-Object { $_.Class -eq 'SteadyBrightness.Slider.1' -and $_.Visible }|Sort-Object Id)
  $element=[System.Windows.Automation.AutomationElement]::FromHandle($controls[0].Handle)
  Assert-True ($element.Current.ControlType -eq [System.Windows.Automation.ControlType]::Slider) 'custom control exposes the Slider accessibility role'
  Assert-True ($element.Current.Name -like '*XV271U M3*') 'slider exposes its monitor name'

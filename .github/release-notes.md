@@ -1,4 +1,14 @@
-Native Windows monitor brightness control with an independent slider per compatible display.
+Native Windows monitor brightness control with independent sliders or one linked slider for all displays.
+
+### New in v1.0.4
+
+- **Link monitors** adopts the primary monitor's brightness, then shows one **All monitors** slider. **Unlink monitors** restores individual controls at their current levels. The button is hidden with one display.
+- Linked mode and its shared target survive app restarts. Reconnected displays join that level through the existing bounded recovery sequence; unavailable or failed monitors remain visible as errors.
+- Fix first-click rendering and the dotted button-focus artifact. Buttons have more caption padding and retain a clean keyboard-focus outline.
+- Compact the linked layout by removing the redundant verification footer. Errors still receive space, and the footer remains in independent mode.
+- Keep event-driven operation with coalesced changes and no continuous monitor polling.
+
+Validation includes Windows build/tests, accessibility, native button painting, light/dark themes, simulated DPI layouts, persistence, and simulated monitor reconnect/failure cases. Physical compatibility depends on the monitor and connection.
 
 ### Install
 

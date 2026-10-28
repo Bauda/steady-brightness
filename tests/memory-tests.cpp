@@ -10,6 +10,11 @@ int main() {
     for(auto& m:monitors){m.backend=DdcVcp;m.maximum=100;Copy(m.name,L"Same monitor model");}
     Copy(monitors[0].persistentId,L"device:one");Copy(monitors[1].persistentId,L"device:two");
     BrightnessMemory memory(key.c_str());int value=-1;
+    check(memory.ReadLink()==-1,"new settings start unlinked");
+    check(memory.SaveLink(0) && BrightnessMemory(key.c_str()).ReadLink()==0,"linked mode and zero target survive a new settings instance");
+    check(memory.SaveLink(100) && memory.ReadLink()==100,"linked maximum brightness persists");
+    check(!memory.SaveLink(-2) && !memory.SaveLink(101) && memory.ReadLink()==100,"invalid linked targets preserve saved mode");
+    check(memory.SaveLink(-1) && BrightnessMemory(key.c_str()).ReadLink()==-1,"unlinking survives a new settings instance");
     check(!memory.Read(monitors[0],value),"no remembered brightness before a successful observation");
     check(memory.Save(monitors[0],37),"save a confirmed brightness");
     check(BrightnessMemory(key.c_str()).Read(monitors[0],value) && value==37,"brightness survives a new settings instance");
