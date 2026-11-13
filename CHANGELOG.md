@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.5
+
+- Update CodeQL init and analyze together to 4.39.3 so their action and CLI versions stay compatible.
+- Group future CodeQL action updates in Dependabot to prevent mismatched init/analyze pull requests.
+- Maintenance release; monitor brightness behavior is unchanged.
+
 ## 1.0.4
 
 - Add **Link monitors**: start from the primary monitor's brightness and control all monitors with one unified slider. Unlink to return to independent controls at their current brightness.
