@@ -583,7 +583,7 @@ void Options() {
     if(selected>=10 && selected<=12)SetTheme((Theme)(selected-10));
     if(selected==13)ToggleRestoration();
     if(selected==3) MessageBoxW(popup,
-        L"Steady Brightness 1.0.4\n\nNative Windows hardware brightness control.\nNo periodic polling while idle. No network access, telemetry, animations or GPU rendering loop.\n\nMonitor calls run in a temporary helper with a 9-second timeout. The helper exits when the flyout closes after pending writes finish.\n\nExternal displays use DDC/CI; built-in panels use Windows WMI when available. Unsupported displays are shown explicitly.\n\nClose other brightness utilities to avoid competing monitor commands.",
+        L"Steady Brightness 1.0.5\n\nNative Windows hardware brightness control.\nNo periodic polling while idle. No network access, telemetry, animations or GPU rendering loop.\n\nMonitor calls run in a temporary helper with a 9-second timeout. The helper exits when the flyout closes after pending writes finish.\n\nExternal displays use DDC/CI; built-in panels use Windows WMI when available. Unsupported displays are shown explicitly.\n\nClose other brightness utilities to avoid competing monitor commands.",
         AppName,MB_OK|MB_ICONINFORMATION);
     menuActive=false;
     if(selected==4) DestroyWindow(host);
@@ -800,7 +800,7 @@ bool RegisterInstall(const std::wstring& dir) {
     if(RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\SteadyBrightness",0,nullptr,0,KEY_SET_VALUE,nullptr,&key,nullptr)!=ERROR_SUCCESS)return false;
     bool ok=true;
     auto set=[&](const wchar_t* name,const std::wstring& value){ if(RegSetValueExW(key,name,0,REG_SZ,(const BYTE*)value.c_str(),(DWORD)((value.size()+1)*sizeof(wchar_t)))!=ERROR_SUCCESS)ok=false; };
-    set(L"DisplayName",AppName);set(L"DisplayVersion",L"1.0.4");set(L"Publisher",L"Steady Brightness contributors");
+    set(L"DisplayName",AppName);set(L"DisplayVersion",L"1.0.5");set(L"Publisher",L"Steady Brightness contributors");
     set(L"InstallLocation",dir);set(L"DisplayIcon",dir+L"\\SteadyBrightness.exe");
     wchar_t system[MAX_PATH];GetSystemDirectoryW(system,ARRAYSIZE(system));
     set(L"UninstallString",L"\""+std::wstring(system)+L"\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \""+dir+L"\\Uninstall.ps1\"");
