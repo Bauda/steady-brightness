@@ -14,7 +14,7 @@ Download `SteadyBrightness-Windows-x64.zip` from the [latest release](https://gi
 
 Installation copies the app and its embedded uninstall scripts into `%LOCALAPPDATA%\Programs\SteadyBrightness`, creates a Start menu shortcut, and registers a per-user Windows uninstall entry. It does not automatically enable startup. Choose **Options > Start with Windows** to opt in.
 
-Click the sun beside the clock to show the flyout. If hidden under **^**, drag it into the visible tray area. **Keep tray icon visible** opens Windows taskbar settings; Windows owns the visibility preference. You may also pin the installed Start menu shortcut to the taskbar. Opening another copy toggles the existing flyout.
+Click the sun beside the clock to show the brightness flyout, or right-click it to open Options on its own. If it is hidden under **^**, drag it into the visible tray area. **Tray icon visibility settings** opens Windows taskbar settings, where you can check and change visibility. You can also pin the installed Start menu shortcut to the taskbar. Opening another copy toggles the existing flyout.
 
 Choose **Options > Theme: Use Windows setting**, **Light**, or **Dark**. Escape or clicking elsewhere hides the flyout. Arrow keys step by 1%; Page keys step by 10%; Home/End select 0/100%.
 
@@ -47,7 +47,7 @@ Choose **Options > Exit**, download and extract the new release, and run its `in
 
 ## Portable use
 
-Run `SteadyBrightness.exe` directly without installing. If you enable **Start with Windows**, keep that executable in a permanent location; the startup entry points to it. To remove a portable copy, turn startup off, exit the app, and delete the executable. Theme preferences remain in `HKCU\Software\SteadyBrightness` unless you remove them yourself.
+Run `SteadyBrightness.exe` directly without installing. If you enable **Start with Windows**, keep that executable in a permanent location. If you move it and the old path is gone, open Options from the new copy and choose **Repair startup registration**. Installing also updates an existing startup registration to the installed path. To remove a portable copy, turn startup off, exit the app, and delete the executable. Theme preferences remain in `HKCU\Software\SteadyBrightness` unless you remove them yourself.
 
 ## Uninstall
 

@@ -26,7 +26,13 @@ The tray uses a separate helper and stops an operation after approximately nine 
 
 ## Icon hidden or missing
 
-Check the **^** tray overflow area. Windows controls which tray icons are visible; drag the sun into the visible area or use **Options > Keep tray icon visible** to open taskbar settings. Launching Steady Brightness again reopens the existing flyout. The app re-registers its icon when Explorer recreates the taskbar.
+Check the **^** tray overflow area. Drag the sun into the visible area or use **Options > Tray icon visibility settings** to see the Windows preference. Launching Steady Brightness again reopens the existing flyout. The app re-registers its icon when Explorer recreates the taskbar. If you run the app from a new path and the icon returns to overflow, set its visibility again in Windows.
+
+## App missing after sign-in
+
+Open Steady Brightness and check **Options > Start with Windows**. If Options shows **Repair startup registration**, select it to point Windows to the current executable. If Options reports that Windows disabled the entry, select it to open **Settings > Apps > Startup** and enable Steady Brightness there. Windows may delay startup apps until after sign-in.
+
+**Restore brightness after wake** controls monitor recovery once the app is running. **Start with Windows** controls launching it for your account. At background startup the app briefly retries monitor detection to give display drivers time to come online.
 
 ## Diagnostics
 

@@ -14,6 +14,8 @@ The native `memory-tests.exe` checks persisted values, valid boundaries, missing
 
 `test-linked.ps1` checks adoption of the primary monitor (including 0% and a primary that is not the first row), one accessible unified slider, independent controls after unlinking, final-value coalescing, partial/unavailable monitor failures, reconnect recovery, single-monitor transitions, persisted mode/target, and GDI stability through repeated toggles. The native tests check link settings across new storage instances. All use isolated demo preferences and simulated brightness. Linked screenshots are captured in light/dark/system themes.
 
+`test-tray.ps1` sends notification icon callbacks to a demo process and checks which native windows open for right-click, left-click, and keyboard selection. It also checks that background startup keeps the flyout hidden and finishes its bounded recovery. The native tests exercise stale startup commands, repair, and preservation of a disabled approval record in temporary registry keys.
+
 For input/painting and light/dark persistence checks on an unlocked, interactive Windows desktop:
 
 ```powershell

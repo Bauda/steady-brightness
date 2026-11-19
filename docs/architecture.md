@@ -30,7 +30,7 @@ Monitor interface arrival/removal, display changes, display wake, and resume eve
 
 - `HKCU\Software\SteadyBrightness\Theme`: 0 = Windows default, 1 = light, 2 = dark. High contrast takes priority.
 - Values named `Brightness:<device interface path>` in the same key store confirmed percentages; `RestoreBrightness` controls restoration (default on). No registry handles or device history stay open in memory.
-- `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\SteadyBrightness`: optional startup command.
+- `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\SteadyBrightness` holds the optional quoted background startup command. The installer rebinds an existing command to the installed executable. Options validates the target and recognizes known Windows Startup Apps disable records without changing Windows approval settings.
 - `%LOCALAPPDATA%\Programs\SteadyBrightness`: per-user installation and embedded removal scripts.
 - Per-user Start menu shortcut and Windows uninstall registration.
 

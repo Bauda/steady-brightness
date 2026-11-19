@@ -1,4 +1,5 @@
 #include "../brightness-memory.h"
+#include "../startup.h"
 #include <stdio.h>
 #pragma comment(lib,"advapi32.lib")
 
@@ -32,6 +33,30 @@ int main() {
     monitors[0].backend=Wmi;check(!BrightnessMemory::Eligible(monitors[0]),"Windows laptop power policy remains independent");
     monitors[0].backend=DdcVcp;monitors[0].persistentId[0]=0;
     check(!memory.Save(monitors[0],100),"unknown identity cannot be saved under a display number");
+
+    auto startupKey = key + L"\\Startup";
+    auto approvalKey = key + L"\\Approval";
+    using Startup::State;
+    auto startup = [&] { return Startup::Read(startupKey.c_str(), approvalKey.c_str()); };
+    check(startup() == State::Off, "startup is off without a registration");
+    check(Startup::Write(startupKey.c_str(), L"C:\\Missing Steady Brightness\\SteadyBrightness.exe", true)
+        == ERROR_SUCCESS && startup() == State::Broken, "missing startup executable is reported as repairable");
+    wchar_t exe[MAX_PATH]{};
+    DWORD length = GetModuleFileNameW(nullptr, exe, ARRAYSIZE(exe));
+    check(length > 0 && length < ARRAYSIZE(exe)
+        && Startup::Write(startupKey.c_str(), exe, true) == ERROR_SUCCESS && startup() == State::On,
+        "repairing startup writes a valid background command");
+    const DWORD approval[3]{3,1,0};
+    check(RegSetKeyValueW(HKEY_CURRENT_USER, approvalKey.c_str(), Startup::Entry, REG_BINARY, approval, sizeof(approval))
+        == ERROR_SUCCESS && startup() == State::DisabledByWindows, "Windows can disable an existing Run entry");
+    check(Startup::Write(startupKey.c_str(), exe, true) == ERROR_SUCCESS && startup() == State::DisabledByWindows,
+        "rebinding the executable preserves Windows Startup Apps approval");
+    check(Startup::Write(startupKey.c_str(), std::wstring(Startup::MaxCommand, L'x'), true) == ERROR_FILENAME_EXCED_RANGE
+        && startup() == State::DisabledByWindows, "an overlong command leaves the previous registration intact");
+    check(Startup::Write(startupKey.c_str(), exe, false) == ERROR_SUCCESS && startup() == State::Off,
+        "disabling the app's startup entry removes the command");
+    RegDeleteKeyW(HKEY_CURRENT_USER, startupKey.c_str());
+    RegDeleteKeyW(HKEY_CURRENT_USER, approvalKey.c_str());
     RegDeleteKeyW(HKEY_CURRENT_USER,key.c_str());RegDeleteKeyW(HKEY_CURRENT_USER,L"Software\\SteadyBrightness.Tests");
     return failures?1:0;
 }
