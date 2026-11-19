@@ -14,7 +14,7 @@ Download `SteadyBrightness-Windows-x64.zip` from the [latest release](https://gi
 
 Installation copies the app and its embedded uninstall scripts into `%LOCALAPPDATA%\Programs\SteadyBrightness`, creates a Start menu shortcut, and registers a per-user Windows uninstall entry. It does not automatically enable startup. Choose **Options > Start with Windows** to opt in.
 
-Click the sun beside the clock to show the brightness flyout, or right-click it to open Options on its own. If it is hidden under **^**, drag it into the visible tray area. **Tray icon visibility settings** opens Windows taskbar settings, where you can check and change visibility. You can also pin the installed Start menu shortcut to the taskbar. Opening another copy toggles the existing flyout.
+Click the sun beside the clock to show the brightness flyout, or right-click it to open Options on its own. If it is hidden under **^**, drag it into the visible tray area. **Open tray icon settings** opens Windows taskbar settings, where you can check and change visibility. You can also pin the installed Start menu shortcut to the taskbar. Opening another copy toggles the existing flyout.
 
 Choose **Options > Theme: Use Windows setting**, **Light**, or **Dark**. Escape or clicking elsewhere hides the flyout. Arrow keys step by 1%; Page keys step by 10%; Home/End select 0/100%.
 

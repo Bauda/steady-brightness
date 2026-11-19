@@ -36,7 +36,7 @@ Requires Windows 10 or 11, x64. External monitors must support DDC/CI; enable it
 
 Release binaries are **unsigned**, so Windows may show an unknown-publisher warning. Releases include SHA-256 checksums and GitHub build provenance. See [verifying downloads](docs/install.md#verify-a-download). Never disable Windows security globally to run the app.
 
-For portable use, run `SteadyBrightness.exe` directly. Search for **Steady Brightness** in Start after installing. Its shortcut can also be pinned to the taskbar. Right-click the tray icon for Options. **Tray icon visibility settings** opens the Windows page that controls whether the icon stays visible.
+For portable use, run `SteadyBrightness.exe` directly. Search for **Steady Brightness** in Start after installing. Its shortcut can also be pinned to the taskbar. Right-click the tray icon for Options. **Open tray icon settings** opens the Windows page that controls whether the icon stays visible.
 
 With multiple displays, click **Link monitors** to set them to the primary monitor's current slider value. Linked mode shows one **All monitors** slider. **Unlink monitors** restores individual sliders without changing their current brightness. The mode and shared level are remembered between app launches; returning displays join that level. Unavailable displays are reported and can be retried with Refresh. Percentages control hardware levels; equal percentages do not guarantee equal perceived brightness on different panels.
 

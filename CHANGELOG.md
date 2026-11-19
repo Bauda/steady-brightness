@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.7
+
+- Rename the tray visibility shortcut to **Open tray icon settings** and place it directly above **About / resource use**.
+
 ## 1.0.6
 
 - Open Options on its own when right-clicking the tray icon. Left-click and keyboard activation still open the brightness flyout.

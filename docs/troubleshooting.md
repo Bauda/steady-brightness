@@ -26,7 +26,7 @@ The tray uses a separate helper and stops an operation after approximately nine 
 
 ## Icon hidden or missing
 
-Check the **^** tray overflow area. Drag the sun into the visible area or use **Options > Tray icon visibility settings** to see the Windows preference. Launching Steady Brightness again reopens the existing flyout. The app re-registers its icon when Explorer recreates the taskbar. If you run the app from a new path and the icon returns to overflow, set its visibility again in Windows.
+Check the **^** tray overflow area. Drag the sun into the visible area or use **Options > Open tray icon settings** to see the Windows preference. Launching Steady Brightness again reopens the existing flyout. The app re-registers its icon when Explorer recreates the taskbar. If you run the app from a new path and the icon returns to overflow, set its visibility again in Windows.
 
 ## App missing after sign-in
 
