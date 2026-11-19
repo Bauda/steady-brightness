@@ -1,6 +1,7 @@
 #include "common.h"
 #include "slider.h"
 #include "brightness-memory.h"
+#include "startup.h"
 #include <dbt.h>
 #include <commctrl.h>
 #include <shellapi.h>
@@ -57,6 +58,7 @@ ULONGLONG started = 0;
 int activeIndex = -1;
 LONG activeCommand = 0;
 int iconRetries = 0;
+bool useTrayGuid = true, trayVersion4 = true;
 HANDLE instanceMutex;
 HPOWERNOTIFY powerNotification;
 HDEVNOTIFY monitorNotification;
@@ -136,23 +138,18 @@ std::wstring Known(REFKNOWNFOLDERID id) {
     if (SUCCEEDED(SHGetKnownFolderPath(id, KF_FLAG_CREATE, nullptr, &p))) { result = p; CoTaskMemFree(p); }
     return result;
 }
-bool AutoStart() {
-    HKEY key; wchar_t data[32768]; DWORD bytes = sizeof(data), type = 0;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS) return false;
-    bool yes = RegQueryValueExW(key, L"SteadyBrightness", nullptr, &type, (BYTE*)data, &bytes) == ERROR_SUCCESS;
-    RegCloseKey(key); return yes;
-}
-void SetAutoStart(bool enable) {
-    HKEY key;
-    LONG error = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
-    if (error == ERROR_SUCCESS) {
-        if (enable) {
-            std::wstring command = L"\"" + Executable() + L"\" --background";
-            error = RegSetValueExW(key, L"SteadyBrightness", 0, REG_SZ, (const BYTE*)command.c_str(), (DWORD)((command.size() + 1) * sizeof(wchar_t)));
-        } else { error = RegDeleteValueW(key, L"SteadyBrightness"); if (error == ERROR_FILE_NOT_FOUND) error = ERROR_SUCCESS; }
-        RegCloseKey(key);
+void SetAutoStart(HWND owner, Startup::State state) {
+    if (state == Startup::State::DisabledByWindows) {
+        ShellExecuteW(owner, L"open", L"ms-settings:startupapps", nullptr, nullptr, SW_SHOWNORMAL);
+        return;
     }
-    if (error != ERROR_SUCCESS) MessageBoxW(popup, L"Windows could not update the startup preference.", AppName, MB_ICONERROR);
+    LONG error = Startup::Write(Startup::RunKey, Executable(), state != Startup::State::On);
+    if (error != ERROR_SUCCESS) {
+        const wchar_t* message = error == ERROR_FILENAME_EXCED_RANGE
+            ? L"The startup path is too long for Windows. Install the app or move it to a shorter path."
+            : L"Windows could not update the startup preference.";
+        MessageBoxW(owner, message, AppName, MB_ICONERROR);
+    }
 }
 
 class Worker {
@@ -401,14 +398,27 @@ void ReadDemo() {
 }
 void AddIcon() {
     tray.cbSize = sizeof(tray); tray.hWnd = host; tray.uID = 1;
-    tray.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_GUID | NIF_SHOWTIP;
+    tray.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
+    if (useTrayGuid) tray.uFlags |= NIF_GUID;
     tray.guidItem = {0xe2512460,0xb58d,0x48d3,{0x9a,0x30,0x40,0x63,0x21,0xab,0x91,0x18}};
     tray.uCallbackMessage = TrayMessage; tray.hIcon = icon; Copy(tray.szTip, AppName);
-    if (Shell_NotifyIconW(NIM_ADD, &tray)) { tray.uVersion = NOTIFYICON_VERSION_4; Shell_NotifyIconW(NIM_SETVERSION, &tray); KillTimer(host, IconTimer); iconRetries = 0; }
+    bool added = Shell_NotifyIconW(NIM_ADD, &tray) != FALSE;
+    if (!added && useTrayGuid) {
+        // Explorer may have registered this GUID to the old executable path.
+        tray.uFlags &= ~NIF_GUID;
+        added = Shell_NotifyIconW(NIM_ADD, &tray) != FALSE;
+        if (added) useTrayGuid = false;
+    }
+    if (added) {
+        tray.uVersion = NOTIFYICON_VERSION_4;
+        trayVersion4 = Shell_NotifyIconW(NIM_SETVERSION, &tray) != FALSE;
+        KillTimer(host, IconTimer);
+        iconRetries = 0;
+    }
     else if (++iconRetries <= 12) SetTimer(host, IconTimer, 5000, nullptr);
 }
 void PositionPopup() {
-    NOTIFYICONIDENTIFIER id{sizeof(id), host, 1, tray.guidItem}; RECT anchor{};
+    NOTIFYICONIDENTIFIER id{sizeof(id), host, 1, useTrayGuid ? tray.guidItem : GUID{}}; RECT anchor{};
     POINT point; GetCursorPos(&point);
     if (SUCCEEDED(Shell_NotifyIconGetRect(&id, &anchor))) point = {anchor.right, anchor.top};
     MONITORINFO mi{sizeof(mi)}; GetMonitorInfoW(MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST), &mi);
@@ -518,6 +528,7 @@ void Hide() {
     if(!pending) Dispatch();
 }
 void Show(bool toggle=true) {
+    if (menuActive) return;
     if(toggle && IsWindowVisible(popup)) {Hide();return;}
     PositionPopup(); ShowWindow(popup,SW_SHOWNORMAL); ShowWindow(popup,SW_SHOW); SetForegroundWindow(popup);
     if(demo) {
@@ -552,12 +563,20 @@ void ToggleLinked() {
     Layout();PositionPopup();Dispatch();
     if(!linkSaved)GeneralStatus(L"Could not save the linked setting.",true);
 }
-void Options() {
-    menuActive=true;
+void Options(HWND owner, POINT point) {
+    if (menuActive) return;
     HMENU menu=CreatePopupMenu();
+    if (!menu) return;
+    menuActive = true;
+    const bool fromTray = owner == host;
+    if (fromTray && IsWindowVisible(popup)) Hide();
+    Startup::State startup = Startup::Read();
+    const wchar_t* startupLabel = L"Start with Windows";
+    if (startup == Startup::State::Broken) startupLabel = L"Repair startup registration";
+    if (startup == Startup::State::DisabledByWindows) startupLabel = L"Start with Windows (disabled)";
     MenuEntry entries[]={
-        {1,L"Start with Windows",AutoStart()},
-        {2,L"Keep tray icon visible"},
+        {1,startupLabel,startup == Startup::State::On},
+        {2,L"Tray icon visibility settings"},
         {13,L"Restore brightness after wake",restoreBrightness},
         {0,L"",false,true},
         {10,L"Theme: Use Windows setting",theme==FollowWindows},
@@ -575,20 +594,23 @@ void Options() {
         if(entry.separator){item.fType=MFT_SEPARATOR;item.fMask=MIIM_FTYPE;}
         InsertMenuItemW(menu,(UINT)-1,TRUE,&item);
     }
-    POINT point;GetCursorPos(&point);SetForegroundWindow(popup);
-    UINT selected=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,point.x,point.y,0,popup,nullptr);
+    SetForegroundWindow(owner);
+    UINT flags = TPM_RETURNCMD | TPM_RIGHTBUTTON;
+    if (fromTray) flags |= TPM_RIGHTALIGN | TPM_BOTTOMALIGN;
+    UINT selected = TrackPopupMenu(menu, flags, point.x, point.y, 0, owner, nullptr);
     DestroyMenu(menu);
-    if(selected==1) SetAutoStart(!AutoStart());
-    if(selected==2) {Hide();ShellExecuteW(nullptr,L"open",L"ms-settings:taskbar",nullptr,nullptr,SW_SHOWNORMAL);}
+    PostMessageW(owner, WM_NULL, 0, 0);
+    if (fromTray && !selected && !testMode) Shell_NotifyIconW(NIM_SETFOCUS, &tray);
+    if(selected==1) SetAutoStart(owner, startup);
+    if(selected==2) {Hide();ShellExecuteW(owner,L"open",L"ms-settings:taskbar",nullptr,nullptr,SW_SHOWNORMAL);}
     if(selected>=10 && selected<=12)SetTheme((Theme)(selected-10));
     if(selected==13)ToggleRestoration();
-    if(selected==3) MessageBoxW(popup,
-        L"Steady Brightness 1.0.5\n\nNative Windows hardware brightness control.\nNo periodic polling while idle. No network access, telemetry, animations or GPU rendering loop.\n\nMonitor calls run in a temporary helper with a 9-second timeout. The helper exits when the flyout closes after pending writes finish.\n\nExternal displays use DDC/CI; built-in panels use Windows WMI when available. Unsupported displays are shown explicitly.\n\nClose other brightness utilities to avoid competing monitor commands.",
+    if(selected==3) MessageBoxW(owner,
+        L"Steady Brightness 1.0.6\n\nNative Windows hardware brightness control.\nNo periodic polling while idle. No network access, telemetry, animations or GPU rendering loop.\n\nMonitor calls run in a temporary helper with a 9-second timeout. The helper exits when the flyout closes after pending writes finish.\n\nExternal displays use DDC/CI; built-in panels use Windows WMI when available. Unsupported displays are shown explicitly.\n\nClose other brightness utilities to avoid competing monitor commands.",
         AppName,MB_OK|MB_ICONINFORMATION);
     menuActive=false;
     if(selected==4) DestroyWindow(host);
-    else if(IsWindowVisible(popup)) SetForegroundWindow(popup);
-    PostMessageW(popup,WM_NULL,0,0);
+    else if(!fromTray && IsWindowVisible(popup)) SetForegroundWindow(popup);
 }
 void Fonts() {
     if(bodyFont) DeleteObject(bodyFont);if(valueFont) DeleteObject(valueFont);if(smallFont) DeleteObject(smallFont);
@@ -619,13 +641,24 @@ void DrawItem(DRAWITEMSTRUCT* item) {
     }
     RestoreDC(dc,-1);
 }
+bool MeasureMenu(MEASUREITEMSTRUCT* item) {
+    if (item->CtlType != ODT_MENU) return false;
+    item->itemWidth = Px(260);
+    item->itemHeight = Px(32);
+    return true;
+}
 LRESULT CALLBACK PopupProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
     switch(message) {
     case WM_ACTIVATE: if(LOWORD(wp)==WA_INACTIVE && !menuActive) Hide();return 0;
     case WM_CLOSE: Hide();return 0;
     case WM_KEYDOWN: if(wp==VK_ESCAPE){Hide();return 0;}break;
     case WM_COMMAND:
-        if(LOWORD(wp)==RefreshId)Refresh();if(LOWORD(wp)==OptionsId)Options();
+        if(LOWORD(wp)==RefreshId)Refresh();
+        if(LOWORD(wp)==OptionsId) {
+            RECT anchor{};
+            GetWindowRect(optionsButton, &anchor);
+            Options(popup, {anchor.left, anchor.bottom});
+        }
         // Let the native button finish its click/capture painting before the
         // flyout changes size and position underneath it.
         if(LOWORD(wp)==LinkId) {
@@ -637,10 +670,7 @@ LRESULT CALLBACK PopupProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
     case WM_DRAWITEM:DrawItem((DRAWITEMSTRUCT*)lp);return TRUE;
     case LinkMessage:ToggleLinked();return 0;
     case LayoutMessage:layoutPending=false;Layout();PositionPopup();return 0;
-    case WM_MEASUREITEM: {
-        auto* item=(MEASUREITEMSTRUCT*)lp;
-        if(item->CtlType==ODT_MENU){item->itemWidth=Px(260);item->itemHeight=Px(32);return TRUE;}break;
-    }
+    case WM_MEASUREITEM:if(MeasureMenu((MEASUREITEMSTRUCT*)lp))return TRUE;break;
     case WM_HSCROLL:
         if(Unified() && (HWND)lp==sharedRow.slider && IsWindowEnabled(sharedRow.slider)) {
             int value=(int)SendMessageW(sharedRow.slider,TBM_GETPOS,0,0);
@@ -684,7 +714,7 @@ LRESULT CALLBACK PopupProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
     return DefWindowProcW(window,message,wp,lp);
 }
 LRESULT CALLBACK HostProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
-    if(message==taskbarCreated && taskbarCreated){AddIcon();return 0;}
+    if(message==taskbarCreated && taskbarCreated){iconRetries=0;AddIcon();return 0;}
     switch(message) {
     case WM_SETTINGCHANGE:case WM_THEMECHANGED:case WM_SYSCOLORCHANGE:ApplyTheme();return 0;
     case ToggleMessage: Show();return 0;
@@ -700,11 +730,21 @@ LRESULT CALLBACK HostProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
     case WM_APP+35:
         if(demo)GeneralStatus(wp?L"Monitor helper stopped. Click Refresh to reconnect.":L"Changes are checked with your monitor.",wp!=0);
         return 0;
-    case TrayMessage:
-        switch(LOWORD(lp)) {
-        case NIN_SELECT:case NIN_KEYSELECT:Show();break;
-        case WM_CONTEXTMENU:if(!IsWindowVisible(popup))Show(false);Options();break;
-        }return 0;
+    case WM_DRAWITEM:DrawItem((DRAWITEMSTRUCT*)lp);return TRUE;
+    case WM_MEASUREITEM:if(MeasureMenu((MEASUREITEMSTRUCT*)lp))return TRUE;break;
+    case WM_CANCELMODE:
+        if (menuActive) EndMenu();
+        break;
+    case TrayMessage: {
+        const UINT event = LOWORD(lp);
+        if (event == NIN_SELECT || event == NIN_KEYSELECT || (!trayVersion4 && event == WM_LBUTTONUP)) Show();
+        if (event == WM_CONTEXTMENU || (!trayVersion4 && event == WM_RBUTTONUP)) {
+            POINT point{GET_X_LPARAM(wp), GET_Y_LPARAM(wp)};
+            if (!trayVersion4 || (point.x == -1 && point.y == -1)) GetCursorPos(&point);
+            Options(window, point);
+        }
+        return 0;
+    }
     case WM_TIMER:
         if(wp==BusyTimer && pending) {
             if(WaitForSingleObject(worker.done,0)==WAIT_OBJECT_0)Complete(false);
@@ -800,7 +840,7 @@ bool RegisterInstall(const std::wstring& dir) {
     if(RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\SteadyBrightness",0,nullptr,0,KEY_SET_VALUE,nullptr,&key,nullptr)!=ERROR_SUCCESS)return false;
     bool ok=true;
     auto set=[&](const wchar_t* name,const std::wstring& value){ if(RegSetValueExW(key,name,0,REG_SZ,(const BYTE*)value.c_str(),(DWORD)((value.size()+1)*sizeof(wchar_t)))!=ERROR_SUCCESS)ok=false; };
-    set(L"DisplayName",AppName);set(L"DisplayVersion",L"1.0.5");set(L"Publisher",L"Steady Brightness contributors");
+    set(L"DisplayName",AppName);set(L"DisplayVersion",L"1.0.6");set(L"Publisher",L"Steady Brightness contributors");
     set(L"InstallLocation",dir);set(L"DisplayIcon",dir+L"\\SteadyBrightness.exe");
     wchar_t system[MAX_PATH];GetSystemDirectoryW(system,ARRAYSIZE(system));
     set(L"UninstallString",L"\""+std::wstring(system)+L"\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \""+dir+L"\\Uninstall.ps1\"");
@@ -820,6 +860,11 @@ int Install() {
     }
     if(!Extract(2,dir+L"\\Uninstall.ps1") || !Extract(3,dir+L"\\Uninstall.cmd") || !RegisterInstall(dir) || !Shortcut(target)) {
         MessageBoxW(nullptr,L"The app was copied, but Windows could not finish creating the shortcuts or uninstall entry. Try the installer again.",AppName,MB_ICONERROR);return 2;
+    }
+    Startup::State startup = Startup::Read();
+    if (startup != Startup::State::Off && startup != Startup::State::Unknown
+        && Startup::Write(Startup::RunKey, target, true) != ERROR_SUCCESS) {
+        MessageBoxW(nullptr, L"Installed, but Windows could not update the startup path. Open Options to repair startup.", AppName, MB_ICONWARNING);
     }
     HINSTANCE launched=ShellExecuteW(nullptr,L"open",target.c_str(),L"--show",dir.c_str(),SW_SHOWNORMAL);
     if((INT_PTR)launched<=32){MessageBoxW(nullptr,L"Installed. Open Steady Brightness from the Start menu to launch it.",AppName,MB_ICONINFORMATION);return 0;}
@@ -844,7 +889,7 @@ int WINAPI wWinMain(HINSTANCE inst,HINSTANCE,PWSTR,int) {
     if(testMode){demoSettingsKey=L"Software\\SteadyBrightness.Tests\\"+std::to_wstring(GetCurrentProcessId());brightnessMemory.UseKey(demoSettingsKey);}
     linkedLevel=brightnessMemory.ReadLink();
     restoreBrightness=testMode || ReadDword(L"Software\\SteadyBrightness",L"RestoreBrightness",1)!=0;
-    bool backgroundStart=has(L"--background"),show=!backgroundStart||testMode;LocalFree(argv);
+    bool backgroundStart=has(L"--background"),show=!backgroundStart||faultHang||faultCrash;LocalFree(argv);
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     SetCurrentProcessExplicitAppUserModelID(L"SteadyBrightness.Tray.1");
     instanceMutex=CreateMutexW(nullptr,FALSE,testMode?L"Local\\SteadyBrightness.Test.1":L"Local\\SteadyBrightness.Instance.1");
@@ -877,7 +922,11 @@ int WINAPI wWinMain(HINSTANCE inst,HINSTANCE,PWSTR,int) {
     DEV_BROADCAST_DEVICEINTERFACE_W filter{};filter.dbcc_size=sizeof(filter);filter.dbcc_devicetype=DBT_DEVTYP_DEVICEINTERFACE;filter.dbcc_classguid=MonitorInterface;
     if(!testMode)monitorNotification=RegisterDeviceNotificationW(host,&filter,DEVICE_NOTIFY_WINDOW_HANDLE);
     ApplyTheme();Layout();if(!testMode)AddIcon();if(show)Show(false);
-    if(!show && (restoreBrightness || linkedLevel>=0) && !testMode)Refresh();
+    if (!show && (restoreBrightness || linkedLevel >= 0)) {
+        // Give Explorer and monitor drivers time to become ready at sign-in.
+        recoveryPasses = 3;
+        ArmTopologyTimer(1400);
+    }
     MSG message;
     while(GetMessageW(&message,nullptr,0,0)>0) {
         if(message.message==WM_KEYDOWN && message.wParam==VK_ESCAPE && IsWindowVisible(popup)){Hide();continue;}

@@ -1,12 +1,13 @@
 Native Windows monitor brightness control with independent sliders or one linked slider for all displays.
 
-### New in v1.0.5
+### New in v1.0.6
 
-- Update CodeQL init and analyze together to 4.39.3, fixing the version mismatch caused by separate dependency updates.
-- Group future CodeQL updates in Dependabot so init and analyze stay on the same version.
-- Maintenance release with no changes to monitor brightness behavior.
+- Right-click the tray icon to open Options on its own. Left-click still opens the brightness sliders.
+- **Tray icon visibility settings** opens the Windows page where you can check and change icon visibility.
+- Options detects a missing startup target and offers **Repair startup registration**. Installing updates an existing registration to the installed executable, and known Windows-disabled startup entries link to Startup Apps.
+- Background launch briefly retries monitor detection while drivers come online. The tray can register again if Explorer rejects an icon identifier tied to a previous executable path.
 
-Validation covers the Windows build, simulated monitors, helper isolation, and release packaging. These automated checks do not establish physical monitor compatibility.
+Validation covers startup registration, the separate tray menu, bounded background recovery, and the Windows test and packaging suites.
 
 ### Install
 

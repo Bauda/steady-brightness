@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.6
+
+- Open Options on its own when right-clicking the tray icon. Left-click and keyboard activation still open the brightness flyout.
+- Name the tray visibility shortcut **Tray icon visibility settings** to match what it opens.
+- Report missing startup targets and offer to repair them. Installation updates an existing registration to the installed path and respects Windows Startup Apps settings.
+- Retry monitor detection briefly after background launch, and recover tray icon registration when Explorer rejects a GUID tied to an old executable location.
+
 ## 1.0.5
 
 - Update CodeQL init and analyze together to 4.39.3 so their action and CLI versions stay compatible.
